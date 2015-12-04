@@ -28,6 +28,7 @@
 //virtual to physical address translation
 //adding cache behaviour
 //think about replacement policy for instructions
+//when printing out address make it a constant size
 
 
 
@@ -42,6 +43,12 @@ static BOOL withinGC = false;
 
 static THREADID gcThreadid = 0;
 static BOOL somethingFailed = false;
+
+static map<ADDRINT, ADDRINT> page_table;
+static ADDRINT next_page = 0;
+
+#define PAGE_SIZE 1024
+#define MEM_SIZE 1024*1024*1024
 
 
 
@@ -79,6 +86,9 @@ static MEM_INFO memValues[LOG_SIZE];
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,  "pintool",
         "o", "", "specify file name for AtomicRegion output");
 
+KNOB<BOOL> KnobVirtualAddressTranslation(KNOB_MODE_WRITEONCE,  "pintool",
+        "at", "", "translate virtual address into physical address");
+
 
 
 /* ===================================================================== */
@@ -112,8 +122,8 @@ VOID initializeVariables(){
     //don't actually have to do this...
 }
 
-inline ADDRINT mask(ADDRINT ea)  {
-    const ADDRINT mask = ~static_cast<ADDRINT>(ACCESS_SIZE-1);
+inline ADDRINT mask(ADDRINT ea, ADDRINT mask_size)  {
+    const ADDRINT mask = ~static_cast<ADDRINT>(mask_size-1);
     return ea & mask;
 }
 
@@ -135,16 +145,43 @@ const char * memOpToString(mem_operations mem_op){
     return "";
 }
 
+ADDRINT retrieveNewPage(){
+    if(next_page == MEM_SIZE){
+        ASSERTX(false && "ran out of pages to allocate");
+    }
+    ADDRINT new_page = next_page;
+    next_page += PAGE_SIZE;
+    return new_page;
+}
+
+ADDRINT convertVirtualToPhysical(ADDRINT v_addr){
+    ADDRINT v_page = mask(v_addr, PAGE_SIZE);
+    //allocating new page if this hasn't been seen yet
+    if(page_table.find(v_page) == page_table.end()){
+        ADDRINT new_page = retrieveNewPage();
+        page_table[v_page] = new_page;
+    }
+    ADDRINT p_page = page_table[v_page];
+    const ADDRINT page_num_mask = static_cast<ADDRINT>(PAGE_SIZE-1);
+    ADDRINT p_addr = p_page | (v_addr & page_num_mask);
+    return p_addr;
+}
+
 VOID writeOutMemLog(){
     for(UINT64 i = 0; i < arrayOffset; i++){
         MEM_INFO &data = memValues[i];
         //splitting it up into as many addresses as necessary
-        ADDRINT start = mask(data.address);
-        ADDRINT end   = mask(data.address + data.access_size - 1);
+        ADDRINT start = mask(data.address, ACCESS_SIZE);
+        ADDRINT end   = mask(data.address + data.access_size - 1, ACCESS_SIZE);
         for(ADDRINT addr = start ; addr <= end ; addr += ACCESS_SIZE) {
             //printing here
+            ADDRINT real_addr = addr;
+            //converting to physical address if necessary
+            if(KnobVirtualAddressTranslation){
+                real_addr = convertVirtualToPhysical(addr);
+            }
             const char * access_type = memOpToString(data.mem_op_type);
-            *out << "0x" << std::hex << std::uppercase << addr << " " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
+            *out << "0x" << std::hex << std::uppercase << real_addr << " " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
         }
     }
 }
@@ -250,6 +287,10 @@ VOID Trace(TRACE trace, VOID *v)
 
 VOID CallSimulationBegin(THREADID threadid){
     gcThreadid = threadid;
+    //want to start fresh for next execution
+    //TODO also want to clear the cache I think...
+    page_table.clear();
+    next_page = 0;
     withinGC = true;
     PIN_RemoveInstrumentation();
 }
