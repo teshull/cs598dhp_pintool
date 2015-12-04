@@ -23,9 +23,12 @@
 /* ================================================================== */
 
 
+//TODO LIST
+//include instructions in the count
+//virtual to physical address translation
+//adding cache behaviour
+//think about replacement policy for instructions
 
-//I want this near the bottom so i have to declare it up here...
-VOID failurePrintout(const char *message);
 
 
 static std::ostream * out = &cerr;
