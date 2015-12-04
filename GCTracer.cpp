@@ -47,6 +47,18 @@ static BOOL somethingFailed = false;
 static map<ADDRINT, ADDRINT> page_table;
 static ADDRINT next_page = 0;
 
+
+namespace LLC
+{
+    const UINT32 max_sets = KILO; // cacheSize / (lineSize * associativity);
+    const UINT32 max_associativity = 256; // associativity;
+    const CACHE_ALLOC::STORE_ALLOCATION allocation = CACHE_ALLOC::STORE_ALLOCATE;
+
+    typedef CACHE_ROUND_ROBIN(max_sets, max_associativity, allocation) CACHE;
+}
+
+LLC::CACHE* llc = NULL;
+
 #define PAGE_SIZE 1024
 #define MEM_SIZE 1024*1024*1024
 
@@ -85,9 +97,16 @@ static MEM_INFO memValues[LOG_SIZE];
 /* ===================================================================== */
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,  "pintool",
         "o", "", "specify file name for AtomicRegion output");
-
 KNOB<BOOL> KnobVirtualAddressTranslation(KNOB_MODE_WRITEONCE,  "pintool",
         "at", "", "translate virtual address into physical address");
+KNOB<BOOL> KnobSimulateCache(KNOB_MODE_WRITEONCE,  "pintool",
+        "cs", "", "simulate llc cache");
+KNOB<UINT32> KnobCacheSize(KNOB_MODE_WRITEONCE, "pintool",
+    "c","32", "cache size in kilobytes");
+KNOB<UINT32> KnobLineSize(KNOB_MODE_WRITEONCE, "pintool",
+    "b","32", "cache block size in bytes");
+KNOB<UINT32> KnobAssociativity(KNOB_MODE_WRITEONCE, "pintool",
+    "a","4", "cache associativity (1 for direct mapped)");
 
 
 
@@ -167,12 +186,18 @@ ADDRINT convertVirtualToPhysical(ADDRINT v_addr){
     return p_addr;
 }
 
+BOOL accessCache(ADDRINT addr, CACHE_BASE::ACCESS_TYPE access){
+    const BOOL llcHit = llc->AccessSingleLine(addr, access);
+    return llcHit;
+}
+
 VOID writeOutMemLog(){
     for(UINT64 i = 0; i < arrayOffset; i++){
         MEM_INFO &data = memValues[i];
         //splitting it up into as many addresses as necessary
         ADDRINT start = mask(data.address, ACCESS_SIZE);
         ADDRINT end   = mask(data.address + data.access_size - 1, ACCESS_SIZE);
+        const char * access_type = memOpToString(data.mem_op_type);
         for(ADDRINT addr = start ; addr <= end ; addr += ACCESS_SIZE) {
             //printing here
             ADDRINT real_addr = addr;
@@ -180,7 +205,11 @@ VOID writeOutMemLog(){
             if(KnobVirtualAddressTranslation){
                 real_addr = convertVirtualToPhysical(addr);
             }
-            const char * access_type = memOpToString(data.mem_op_type);
+            //if cache hit, then don't need to log for this address
+            //FIXME need to change this to the right type
+            if(KnobSimulateCache && accessCache(real_addr, CACHE_BASE::ACCESS_TYPE_LOAD)){
+                continue;
+            }
             *out << "0x" << std::hex << std::uppercase << real_addr << " " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
         }
     }
@@ -200,6 +229,7 @@ VOID writeOutMemLog(){
 // This function is called before every block
 //
 //
+
 VOID PIN_FAST_ANALYSIS_CALL record_mem(THREADID threadid, ADDRINT memea, UINT32 length, UINT32 mem_type) {
     if(threadid != gcThreadid){
         return;
@@ -375,6 +405,13 @@ int main(int argc, char *argv[])
 
 
     initializeVariables(); //setting up variables
+
+    if(KnobSimulateCache){
+        llc = new LLC::CACHE("LLC cache", 
+                KnobCacheSize.Value() * KILO,
+                KnobLineSize.Value(),
+                KnobAssociativity.Value());
+    }
 
     // Initialize the lock
     PIN_InitLock(&lock);
