@@ -197,6 +197,82 @@ class ROUND_ROBIN
     }
 };
 
+/*!
+ *  @brief Cache set with least recently used replacement policy
+ */
+template <UINT32 MAX_ASSOCIATIVITY = 4>
+class LEAST_RECENTLY_USED
+{
+  private:
+    CACHE_TAG _tags[MAX_ASSOCIATIVITY];
+    vector<UINT32> lru_list;
+    UINT32 _current_associativity;
+
+  public:
+    LEAST_RECENTLY_USED(UINT32 associativity = MAX_ASSOCIATIVITY)
+      : _current_associativity(associativity) 
+    {
+        ASSERTX(associativity <= MAX_ASSOCIATIVITY);
+
+        for (INT32 index = 0; index < _current_associativity; index++)
+        {
+            _tags[index] = CACHE_TAG(0);
+            lru_list.push_back(index);
+        }
+    }
+
+    VOID SetAssociativity(UINT32 associativity)
+    {
+        ASSERTX(associativity <= MAX_ASSOCIATIVITY);
+        lru_list.clear();
+        for (INT32 index = 0; index < _current_associativity; index++)
+        {
+            lru_list.push_back(index);
+        }
+    }
+    UINT32 GetAssociativity(UINT32 associativity) { return _current_associativity; }
+
+    VOID SetMostRecentlyUsed(UINT32 value)
+    {
+        UINT32 index = 0;
+        for(index = 0; index < _current_associativity; index++){
+            if(lru_list[index] == value){
+                //moving the value to the most recently used slot
+                lru_list.erase(lru_list.begin() + index, lru_list.begin() + index + 1);
+                lru_list.push_back(value);
+                return;
+            }
+        }
+        ASSERTX(false && "index was not found in the lru_list");
+    }
+    
+    UINT32 Find(CACHE_TAG tag)
+    {
+
+        for (UINT32 index = 0; index < _current_associativity; index++)
+        {
+            //searching for the tag
+            if(_tags[index] == tag){
+                //need to update the lru list
+                SetMostRecentlyUsed(index);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    VOID Replace(CACHE_TAG tag)
+    {
+        //this is the least recently used index
+        const UINT32 index = lru_list[0];
+
+        _tags[index] = tag;
+        // condition typically faster than modulo
+        SetMostRecentlyUsed(index);
+    }
+};
+
 } // namespace CACHE_SET
 
 namespace CACHE_ALLOC
@@ -463,5 +539,6 @@ bool CACHE<SET,MAX_SETS,STORE_ALLOCATION>::AccessSingleLine(ADDRINT addr, ACCESS
 //FIXME need to implement last used policy
 #define CACHE_DIRECT_MAPPED(MAX_SETS, ALLOCATION) CACHE<CACHE_SET::DIRECT_MAPPED, MAX_SETS, ALLOCATION>
 #define CACHE_ROUND_ROBIN(MAX_SETS, MAX_ASSOCIATIVITY, ALLOCATION) CACHE<CACHE_SET::ROUND_ROBIN<MAX_ASSOCIATIVITY>, MAX_SETS, ALLOCATION>
+#define CACHE_LEAST_RECENTLY_USED(MAX_SETS, MAX_ASSOCIATIVITY, ALLOCATION) CACHE<CACHE_SET::LEAST_RECENTLY_USED<MAX_ASSOCIATIVITY>, MAX_SETS, ALLOCATION>
 
 #endif // PIN_CACHE_H

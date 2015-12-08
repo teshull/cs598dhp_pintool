@@ -56,7 +56,8 @@ namespace LLC
     const UINT32 max_associativity = 256; // associativity;
     const CACHE_ALLOC::STORE_ALLOCATION allocation = CACHE_ALLOC::STORE_ALLOCATE;
 
-    typedef CACHE_ROUND_ROBIN(max_sets, max_associativity, allocation) CACHE;
+    //typedef CACHE_ROUND_ROBIN(max_sets, max_associativity, allocation) CACHE;
+    typedef CACHE_LEAST_RECENTLY_USED(max_sets, max_associativity, allocation) CACHE;
 }
 
 LLC::CACHE* llc = NULL;
