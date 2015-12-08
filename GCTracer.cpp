@@ -8,6 +8,7 @@
 //#include "control_manager.H"
 #include "portability.H"
 #include <iostream>
+#include <iomanip>
 #include <fstream>
 #include <sstream>
 #include <map>
@@ -29,6 +30,7 @@
 //adding cache behaviour
 //think about replacement policy for instructions
 //when printing out address make it a constant size
+//have a last used policy in the cache
 
 
 
@@ -38,8 +40,8 @@ static int NumArgs = 0;
 static char **Args;
 
 // used for keeping track of the state
-static BOOL withinGC = false;
-//static BOOL withinGC = true;
+//static BOOL withinGC = false;
+static BOOL withinGC = true;
 
 static THREADID gcThreadid = 0;
 static BOOL somethingFailed = false;
@@ -59,8 +61,8 @@ namespace LLC
 
 LLC::CACHE* llc = NULL;
 
-#define PAGE_SIZE 1024
-#define MEM_SIZE 1024*1024*1024
+#define PAGE_SIZE KILO
+#define MEM_SIZE ((long long int)4*GIGA)
 
 
 
@@ -192,6 +194,7 @@ BOOL accessCache(ADDRINT addr, CACHE_BASE::ACCESS_TYPE access){
 }
 
 VOID writeOutMemLog(){
+    cerr << "writing out log" << endl;
     for(UINT64 i = 0; i < arrayOffset; i++){
         MEM_INFO &data = memValues[i];
         //splitting it up into as many addresses as necessary
@@ -210,7 +213,8 @@ VOID writeOutMemLog(){
             if(KnobSimulateCache && accessCache(real_addr, CACHE_BASE::ACCESS_TYPE_LOAD)){
                 continue;
             }
-            *out << "0x" << std::hex << std::uppercase << real_addr << " " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
+            *out << "0x" << std::hex << std::uppercase << setw(16) <<  setfill('0') << real_addr <<
+                " " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
         }
     }
 }
@@ -236,7 +240,6 @@ VOID PIN_FAST_ANALYSIS_CALL record_mem(THREADID threadid, ADDRINT memea, UINT32 
     }
     memValues[arrayOffset++] = MEM_INFO(memea, (mem_operations)mem_type, length);
     if(arrayOffset == LOG_SIZE){
-        cerr << "this happened" << endl;
         //at this point need to write it out
         writeOutMemLog();
         arrayOffset = 0;
