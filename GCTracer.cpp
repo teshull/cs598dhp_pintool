@@ -40,8 +40,8 @@ static int NumArgs = 0;
 static char **Args;
 
 // used for keeping track of the state
-//static BOOL withinGC = false;
-static BOOL withinGC = true;
+static BOOL withinGC = false;
+//static BOOL withinGC = true;
 
 static THREADID gcThreadid = 0;
 static BOOL somethingFailed = false;
@@ -104,10 +104,12 @@ KNOB<BOOL> KnobVirtualAddressTranslation(KNOB_MODE_WRITEONCE,  "pintool",
         "at", "", "translate virtual address into physical address");
 KNOB<BOOL> KnobSimulateCache(KNOB_MODE_WRITEONCE,  "pintool",
         "cs", "", "simulate llc cache");
+KNOB<BOOL> KnobMonitorFromStart(KNOB_MODE_WRITEONCE,  "pintool",
+        "mfs", "", "monitor program from the beginning (for testing)");
 KNOB<UINT32> KnobCacheSize(KNOB_MODE_WRITEONCE, "pintool",
     "c","32", "cache size in kilobytes");
 KNOB<UINT32> KnobLineSize(KNOB_MODE_WRITEONCE, "pintool",
-    "b","32", "cache block size in bytes");
+    "l","32", "cache line size in bytes");
 KNOB<UINT32> KnobAssociativity(KNOB_MODE_WRITEONCE, "pintool",
     "a","4", "cache associativity (1 for direct mapped)");
 
@@ -375,10 +377,29 @@ VOID failurePrintout(const char *message){
 VOID Fini(INT32 code, VOID *v)
 {
     if(somethingFailed){
-        *out << "something failed so I'm not printing out any results" << endl;
-        cerr << "something failed so I'm not printing out any results" << endl;
+        *out << "something failed: these results are not valid" << endl;
+        cerr << "something failed: these results are not valid" << endl;
+        return;
     }
+    //writing out remaining mem accesses
     writeOutMemLog();
+
+    //printing out cache info (if cache used)
+    if(KnobSimulateCache){
+        *out << "*****CACHE INFO*****" << endl;
+        UINT64 accesses, hits, misses;
+        double hit_rate, miss_rate;
+        accesses = llc->Accesses();
+        hits = llc->Hits();
+        misses = llc->Misses();
+        hit_rate = 1.0 * hits / accesses * 100;
+        miss_rate = 1.0 * misses / accesses * 100;
+        *out << "Total Accesses: " << accesses << endl;
+        *out << "Total Hits: " << hits << endl;
+        *out << "Total Misses: " << misses << endl;
+        *out << "Hit Rate: " << hit_rate << endl;
+        *out << "Miss Rate: " << miss_rate << endl;
+    }
 }
 
 /*!
@@ -426,6 +447,9 @@ int main(int argc, char *argv[])
 
     if (!fileName.empty()) { out = new std::ofstream(fileName.c_str());}
 
+    //checking if we want to simulate from the beginning
+    withinGC = KnobMonitorFromStart;
+    
     //to identify calls in the code for starting/stoping instruction count
     RTN_AddInstrumentFunction(Routine, 0);
 

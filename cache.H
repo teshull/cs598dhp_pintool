@@ -142,7 +142,7 @@ class DIRECT_MAPPED
 /*!
  *  @brief Cache set with round robin replacement
  */
-template <UINT32 MAX_ASSOCIATIVITY = 4>
+template <UINT32 MAX_ASSOCIATIVITY = 16>
 class ROUND_ROBIN
 {
   private:
@@ -200,11 +200,12 @@ class ROUND_ROBIN
 /*!
  *  @brief Cache set with least recently used replacement policy
  */
-template <UINT32 MAX_ASSOCIATIVITY = 4>
+template <UINT32 MAX_ASSOCIATIVITY = 16>
 class LEAST_RECENTLY_USED
 {
   private:
     CACHE_TAG _tags[MAX_ASSOCIATIVITY];
+    //vector contains indexes into _tags, the LRU _tag index in vector pos 0, MRU _tag index in vector pos (vector.size() - 1)
     vector<UINT32> lru_list;
     UINT32 _current_associativity;
 
@@ -217,6 +218,7 @@ class LEAST_RECENTLY_USED
         for (INT32 index = 0; index < _current_associativity; index++)
         {
             _tags[index] = CACHE_TAG(0);
+            //arbitrarily setting intial LRU ordering (_tag[0] is the LRU initially)
             lru_list.push_back(index);
         }
     }
@@ -273,10 +275,11 @@ class LEAST_RECENTLY_USED
     }
 };
 
+//FIXME this still needs to be finished
 /*!
  *  @brief Cache set with a PSEUDO least recently used replacement policy
  */
-template <UINT32 MAX_ASSOCIATIVITY = 4>
+template <UINT32 MAX_ASSOCIATIVITY = 16>
 class PSEUDO_LRU
 {
   private:
@@ -290,6 +293,7 @@ class PSEUDO_LRU
       : _current_associativity(associativity) 
     {
         ASSERTX(associativity <= MAX_ASSOCIATIVITY);
+        ASSERTX(false && "the pseudo lru pass isn't finished yet...");
 
         for (INT32 index = 0; index < _current_associativity; index++)
         {
@@ -297,7 +301,7 @@ class PSEUDO_LRU
             lru_list.push_back(index);
         }
         //this is for the tree setting impossible options
-        bool level = 1;
+        int level = 1;
         while(_current_associativity + 1 < MAX_ASSOCIATIVITY / level){
             //FIXME this isn't quite right yet
             INT32 start = _current_associativity / level + (_current_associativity % level) * 1;
