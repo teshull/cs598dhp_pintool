@@ -18,6 +18,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include "cache.H"
+//this is for multithreading
+#include "atomic.hpp"
 
 /* ================================================================== */
 // Global variables 
@@ -36,11 +38,14 @@
 
 static std::ostream * out = &cerr;
 static PIN_LOCK lock;
+static PIN_SEMAPHORE record_mem_sem;
+static PIN_RWMUTEX rwlock;
+
 static int NumArgs = 0;
 static char **Args;
 
 // used for keeping track of the state
-static BOOL withinGC = false;
+static volatile BOOL withinGC = false;
 //static BOOL withinGC = true;
 
 static THREADID gcThreadid = 0;
@@ -48,6 +53,9 @@ static BOOL somethingFailed = false;
 
 static map<ADDRINT, ADDRINT> page_table;
 static ADDRINT next_page = 0;
+
+//counters that are thread-safe
+static volatile int numThreads = 0;
 
 
 namespace LLC
@@ -92,8 +100,8 @@ struct MEM_INFO{
 #define LOG_SIZE 1000000
 //size in bytes of a dram access
 #define ACCESS_SIZE 8
-static UINT64 arrayOffset = 0;
 static MEM_INFO memValues[LOG_SIZE];
+static volatile UINT64 arrayOffset = 0;
 
 /* ===================================================================== */
 // Command line switches
@@ -238,15 +246,42 @@ VOID writeOutMemLog(){
 //
 
 VOID PIN_FAST_ANALYSIS_CALL record_mem(THREADID threadid, ADDRINT memea, UINT32 length, UINT32 mem_type) {
+    //TODO need to have something different for this
     if(threadid != gcThreadid){
         return;
     }
-    memValues[arrayOffset++] = MEM_INFO(memea, (mem_operations)mem_type, length);
-    if(arrayOffset == LOG_SIZE){
-        //at this point need to write it out
-        writeOutMemLog();
-        arrayOffset = 0;
-    }
+
+    bool finished = false;
+    UINT64 indexValue;
+    UINT64 newValue;
+    do{
+        //get read lock
+        PIN_RWMutexReadLock(&rwlock);
+        //trying to get a place in the array
+        do{
+            indexValue = ATOMIC::OPS::Load(&arrayOffset);
+            newValue = indexValue + 1;
+        }while(!(ATOMIC::OPS::CompareAndDidSwap(&arrayOffset, indexValue, newValue)));
+        if(indexValue < LOG_SIZE){
+            //can write value to a spot in the array and be done
+            memValues[indexValue] = MEM_INFO(memea, (mem_operations)mem_type, length);
+            PIN_RWMutexUnlock(&rwlock);
+            finished = true;
+        }else if(indexValue > LOG_SIZE){
+            //need to run again when the log has be flushed
+            PIN_RWMutexUnlock(&rwlock);
+        }else{ //this means this thread is responsible for writing out the log
+            //releasing reader lock
+            PIN_RWMutexUnlock(&rwlock);
+            //NOTE: i'm pretty sure it tries to prevent writer starvation
+            //attaining writing lock
+            PIN_RWMutexWriteLock(&rwlock);
+                writeOutMemLog();
+                ATOMIC::OPS::Store<UINT64>(&arrayOffset, 0);
+            PIN_RWMutexUnlock(&rwlock);
+            //now will re-execute and try to get a real position
+        }
+    } while(!finished);
 }
 
 
@@ -306,6 +341,11 @@ VOID Trace(TRACE trace, VOID *v)
             }
         }
     }
+}
+
+VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
+{
+    ATOMIC::OPS::Increment(&numThreads,1);
 }
 
 
@@ -440,6 +480,8 @@ int main(int argc, char *argv[])
 
     // Initialize the lock
     PIN_InitLock(&lock);
+    PIN_SemaphoreInit(&record_mem_sem);
+    PIN_RWMutexInit(&rwlock);
 
 
 
@@ -449,7 +491,7 @@ int main(int argc, char *argv[])
 
     //checking if we want to simulate from the beginning
     withinGC = KnobMonitorFromStart;
-    
+
     //to identify calls in the code for starting/stoping instruction count
     RTN_AddInstrumentFunction(Routine, 0);
 
@@ -459,6 +501,11 @@ int main(int argc, char *argv[])
 
     // Register function to be called to instrument traces
     TRACE_AddInstrumentFunction(Trace, 0);
+
+    //for threads
+    PIN_AddThreadStartFunction(ThreadStart, 0);
+    //may want to do something with this eventually
+    //PIN_AddThreadFiniFunction(ThreadStart, 0);
 
     cerr <<  "===============================================" << endl;
     cerr <<  "This application is instrumented by MyPinTool" << endl;
