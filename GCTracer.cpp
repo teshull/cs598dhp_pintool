@@ -106,6 +106,8 @@ KNOB<BOOL> KnobVirtualAddressTranslation(KNOB_MODE_WRITEONCE,  "pintool",
         "at", "", "translate virtual address into physical address");
 KNOB<BOOL> KnobSimulateCache(KNOB_MODE_WRITEONCE,  "pintool",
         "cs", "", "simulate llc cache");
+KNOB<BOOL> KnobPrintCacheHits(KNOB_MODE_WRITEONCE,  "pintool",
+        "pch", "", "print the llc cache hits");
 KNOB<BOOL> KnobMonitorFromStart(KNOB_MODE_WRITEONCE,  "pintool",
         "mfs", "", "monitor program from the beginning (for testing)");
 KNOB<UINT32> KnobCacheSize(KNOB_MODE_WRITEONCE, "pintool",
@@ -218,8 +220,11 @@ VOID writeOutMemLog(){
             //logging both the cache hits and misses
             if(KnobSimulateCache && accessCache(real_addr, CACHE_BASE::ACCESS_TYPE_LOAD)){
                 //may want to record these are well
-                *out << "0x" << std::hex << std::uppercase << setw(16) <<  setfill('0') << real_addr <<
-                    " " << "CACHE HIT " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
+                if(KnobPrintCacheHits){
+                    *out << "0x" << std::hex << std::uppercase << setw(16) <<  setfill('0') << real_addr <<
+                        " " << "CACHE HIT " << access_type << std::nouppercase << std::dec << 
+                        data.cycle_num << endl;
+                }
             }else{
                 *out << "0x" << std::hex << std::uppercase << setw(16) <<  setfill('0') << real_addr <<
                     " " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
