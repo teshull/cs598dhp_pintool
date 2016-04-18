@@ -25,12 +25,13 @@
 
 
 //TODO LIST
-//include instructions in the count
-//virtual to physical address translation
-//adding cache behaviour
-//think about replacement policy for instructions
-//when printing out address make it a constant size
-//have a last used policy in the cache
+//include instructions in the count --don
+//virtual to physical address translation --done
+//adding cache behaviour --done
+//think about replacement policy for instructions --done
+//when printing out address make it a constant size --done
+//have a last used policy in the cache --done
+//also list the cache hits (this is for mem footprint numbers) --done
 
 
 
@@ -52,8 +53,8 @@ static ADDRINT next_page = 0;
 
 namespace LLC
 {
-    const UINT32 max_sets = KILO; // cacheSize / (lineSize * associativity);
-    const UINT32 max_associativity = 256; // associativity;
+    const UINT32 max_sets = 8*KILO; // cacheSize / (lineSize * associativity);
+    const UINT32 max_associativity = 16; // associativity;
     const CACHE_ALLOC::STORE_ALLOCATION allocation = CACHE_ALLOC::STORE_ALLOCATE;
 
     //typedef CACHE_ROUND_ROBIN(max_sets, max_associativity, allocation) CACHE;
@@ -89,7 +90,8 @@ struct MEM_INFO{
 
 };
 
-#define LOG_SIZE 1000000
+const UINT64 LOG_SIZE = 5E7; //50 million
+//const UINT64 LOG_SIZE = 1000000;
 //size in bytes of a dram access
 #define ACCESS_SIZE 8
 static UINT64 arrayOffset = 0;
@@ -99,7 +101,7 @@ static MEM_INFO memValues[LOG_SIZE];
 // Command line switches
 /* ===================================================================== */
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,  "pintool",
-        "o", "", "specify file name for AtomicRegion output");
+        "o", "", "specify file name for GC Tracer output");
 KNOB<BOOL> KnobVirtualAddressTranslation(KNOB_MODE_WRITEONCE,  "pintool",
         "at", "", "translate virtual address into physical address");
 KNOB<BOOL> KnobSimulateCache(KNOB_MODE_WRITEONCE,  "pintool",
@@ -109,7 +111,7 @@ KNOB<BOOL> KnobMonitorFromStart(KNOB_MODE_WRITEONCE,  "pintool",
 KNOB<UINT32> KnobCacheSize(KNOB_MODE_WRITEONCE, "pintool",
     "c","32", "cache size in kilobytes");
 KNOB<UINT32> KnobLineSize(KNOB_MODE_WRITEONCE, "pintool",
-    "l","32", "cache line size in bytes");
+    "l","64", "cache line size in bytes");
 KNOB<UINT32> KnobAssociativity(KNOB_MODE_WRITEONCE, "pintool",
     "a","4", "cache associativity (1 for direct mapped)");
 
@@ -211,13 +213,17 @@ VOID writeOutMemLog(){
             if(KnobVirtualAddressTranslation){
                 real_addr = convertVirtualToPhysical(addr);
             }
-            //if cache hit, then don't need to log for this address
             //FIXME need to change this to the right type
+            //actually don't really think it is necessary
+            //logging both the cache hits and misses
             if(KnobSimulateCache && accessCache(real_addr, CACHE_BASE::ACCESS_TYPE_LOAD)){
-                continue;
+                //may want to record these are well
+                *out << "0x" << std::hex << std::uppercase << setw(16) <<  setfill('0') << real_addr <<
+                    " " << "CACHE HIT " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
+            }else{
+                *out << "0x" << std::hex << std::uppercase << setw(16) <<  setfill('0') << real_addr <<
+                    " " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
             }
-            *out << "0x" << std::hex << std::uppercase << setw(16) <<  setfill('0') << real_addr <<
-                " " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
         }
     }
 }
@@ -272,6 +278,15 @@ VOID Trace(TRACE trace, VOID *v)
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl))
     {
         for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)){
+            //instrument the code
+            unsigned int instruction_bytes = INS_Size(ins);
+            INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) record_mem,
+                    IARG_FAST_ANALYSIS_CALL,
+                    IARG_THREAD_ID,
+                    IARG_INST_PTR,
+                    IARG_UINT32, instruction_bytes,
+                    IARG_UINT32, INSTRUCTION_OP,
+                    IARG_END);
             // instrument the load(s)
             if (INS_IsMemoryRead(ins)) {
                 INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) record_mem,
@@ -449,7 +464,7 @@ int main(int argc, char *argv[])
 
     //checking if we want to simulate from the beginning
     withinGC = KnobMonitorFromStart;
-    
+
     //to identify calls in the code for starting/stoping instruction count
     RTN_AddInstrumentFunction(Routine, 0);
 
