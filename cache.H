@@ -226,6 +226,7 @@ class LEAST_RECENTLY_USED
     VOID SetAssociativity(UINT32 associativity)
     {
         ASSERTX(associativity <= MAX_ASSOCIATIVITY);
+        _current_associativity = associativity;
         lru_list.clear();
         for (INT32 index = 0; index < _current_associativity; index++)
         {
@@ -315,6 +316,7 @@ class PSEUDO_LRU
     VOID SetAssociativity(UINT32 associativity)
     {
         ASSERTX(associativity <= MAX_ASSOCIATIVITY);
+        _current_associativity = associativity;
         lru_list.clear();
         for (INT32 index = 0; index < _current_associativity; index++)
         {
