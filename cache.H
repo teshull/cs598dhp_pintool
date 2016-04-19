@@ -1,10 +1,10 @@
 /*BEGIN_LEGAL 
-Intel Open Source License 
+  Intel Open Source License 
 
-Copyright (c) 2002-2014 Intel Corporation. All rights reserved.
- 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are
+  Copyright (c) 2002-2014 Intel Corporation. All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are
 met:
 
 Redistributions of source code must retain the above copyright notice,
@@ -15,7 +15,7 @@ other materials provided with the distribution.  Neither the name of
 the Intel Corporation nor the names of its contributors may be used to
 endorse or promote products derived from this software without
 specific prior written permission.
- 
+
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -105,13 +105,13 @@ static inline INT32 CeilLog2(UINT32 n)
  */
 class CACHE_TAG
 {
-  private:
-    ADDRINT _tag;
+    private:
+        ADDRINT _tag;
 
-  public:
-    CACHE_TAG(ADDRINT tag = 0) { _tag = tag; }
-    bool operator==(const CACHE_TAG &right) const { return _tag == right._tag; }
-    operator ADDRINT() const { return _tag; }
+    public:
+        CACHE_TAG(ADDRINT tag = 0) { _tag = tag; }
+        bool operator==(const CACHE_TAG &right) const { return _tag == right._tag; }
+        operator ADDRINT() const { return _tag; }
 };
 
 
@@ -121,250 +121,250 @@ class CACHE_TAG
 namespace CACHE_SET
 {
 
-/*!
- *  @brief Cache set direct mapped
- */
-class DIRECT_MAPPED
-{
-  private:
-    CACHE_TAG _tag;
-
-  public:
-    DIRECT_MAPPED(UINT32 associativity = 1) { ASSERTX(associativity == 1); }
-
-    VOID SetAssociativity(UINT32 associativity) { ASSERTX(associativity == 1); }
-    UINT32 GetAssociativity(UINT32 associativity) { return 1; }
-
-    UINT32 Find(CACHE_TAG tag) { return(_tag == tag); }
-    VOID Replace(CACHE_TAG tag) { _tag = tag; }
-};
-
-/*!
- *  @brief Cache set with round robin replacement
- */
-template <UINT32 MAX_ASSOCIATIVITY = 16>
-class ROUND_ROBIN
-{
-  private:
-    CACHE_TAG _tags[MAX_ASSOCIATIVITY];
-    UINT32 _tagsLastIndex;
-    UINT32 _nextReplaceIndex;
-
-  public:
-    ROUND_ROBIN(UINT32 associativity = MAX_ASSOCIATIVITY)
-      : _tagsLastIndex(associativity - 1)
+    /*!
+     *  @brief Cache set direct mapped
+     */
+    class DIRECT_MAPPED
     {
-        ASSERTX(associativity <= MAX_ASSOCIATIVITY);
-        _nextReplaceIndex = _tagsLastIndex;
+        private:
+            CACHE_TAG _tag;
 
-        for (INT32 index = _tagsLastIndex; index >= 0; index--)
+        public:
+            DIRECT_MAPPED(UINT32 associativity = 1) { ASSERTX(associativity == 1); }
+
+            VOID SetAssociativity(UINT32 associativity) { ASSERTX(associativity == 1); }
+            UINT32 GetAssociativity(UINT32 associativity) { return 1; }
+
+            UINT32 Find(CACHE_TAG tag) { return(_tag == tag); }
+            VOID Replace(CACHE_TAG tag) { _tag = tag; }
+    };
+
+    /*!
+     *  @brief Cache set with round robin replacement
+     */
+    template <UINT32 MAX_ASSOCIATIVITY = 16>
+        class ROUND_ROBIN
         {
-            _tags[index] = CACHE_TAG(0);
-        }
-    }
+            private:
+                CACHE_TAG _tags[MAX_ASSOCIATIVITY];
+                UINT32 _tagsLastIndex;
+                UINT32 _nextReplaceIndex;
 
-    VOID SetAssociativity(UINT32 associativity)
-    {
-        ASSERTX(associativity <= MAX_ASSOCIATIVITY);
-        _tagsLastIndex = associativity - 1;
-        _nextReplaceIndex = _tagsLastIndex;
-    }
-    UINT32 GetAssociativity(UINT32 associativity) { return _tagsLastIndex + 1; }
-    
-    UINT32 Find(CACHE_TAG tag)
-    {
-        bool result = true;
+            public:
+                ROUND_ROBIN(UINT32 associativity = MAX_ASSOCIATIVITY)
+                    : _tagsLastIndex(associativity - 1)
+                {
+                    ASSERTX(associativity <= MAX_ASSOCIATIVITY);
+                    _nextReplaceIndex = _tagsLastIndex;
 
-        for (INT32 index = _tagsLastIndex; index >= 0; index--)
+                    for (INT32 index = _tagsLastIndex; index >= 0; index--)
+                    {
+                        _tags[index] = CACHE_TAG(0);
+                    }
+                }
+
+                VOID SetAssociativity(UINT32 associativity)
+                {
+                    ASSERTX(associativity <= MAX_ASSOCIATIVITY);
+                    _tagsLastIndex = associativity - 1;
+                    _nextReplaceIndex = _tagsLastIndex;
+                }
+                UINT32 GetAssociativity(UINT32 associativity) { return _tagsLastIndex + 1; }
+
+                UINT32 Find(CACHE_TAG tag)
+                {
+                    bool result = true;
+
+                    for (INT32 index = _tagsLastIndex; index >= 0; index--)
+                    {
+                        // this is an ugly micro-optimization, but it does cause a
+                        // tighter assembly loop for ARM that way ...
+                        if(_tags[index] == tag) goto end;
+                    }
+                    result = false;
+
+end: return result;
+                }
+
+                VOID Replace(CACHE_TAG tag)
+                {
+                    // g++ -O3 too dumb to do CSE on following lines?!
+                    const UINT32 index = _nextReplaceIndex;
+
+                    _tags[index] = tag;
+                    // condition typically faster than modulo
+                    _nextReplaceIndex = (index == 0 ? _tagsLastIndex : index - 1);
+                }
+        };
+
+    /*!
+     *  @brief Cache set with least recently used replacement policy
+     */
+    template <UINT32 MAX_ASSOCIATIVITY = 16>
+        class LEAST_RECENTLY_USED
         {
-            // this is an ugly micro-optimization, but it does cause a
-            // tighter assembly loop for ARM that way ...
-            if(_tags[index] == tag) goto end;
-        }
-        result = false;
+            private:
+                CACHE_TAG _tags[MAX_ASSOCIATIVITY];
+                //vector contains indexes into _tags, the LRU _tag index in vector pos 0, MRU _tag index in vector pos (vector.size() - 1)
+                vector<UINT32> lru_list;
+                UINT32 _current_associativity;
 
-        end: return result;
-    }
+            public:
+                LEAST_RECENTLY_USED(UINT32 associativity = MAX_ASSOCIATIVITY)
+                    : _current_associativity(associativity) 
+                {
+                    ASSERTX(associativity <= MAX_ASSOCIATIVITY);
 
-    VOID Replace(CACHE_TAG tag)
-    {
-        // g++ -O3 too dumb to do CSE on following lines?!
-        const UINT32 index = _nextReplaceIndex;
+                    for (INT32 index = 0; index < _current_associativity; index++)
+                    {
+                        _tags[index] = CACHE_TAG(0);
+                        //arbitrarily setting intial LRU ordering (_tag[0] is the LRU initially)
+                        lru_list.push_back(index);
+                    }
+                }
 
-        _tags[index] = tag;
-        // condition typically faster than modulo
-        _nextReplaceIndex = (index == 0 ? _tagsLastIndex : index - 1);
-    }
-};
+                VOID SetAssociativity(UINT32 associativity)
+                {
+                    ASSERTX(associativity <= MAX_ASSOCIATIVITY);
+                    _current_associativity = associativity;
+                    lru_list.clear();
+                    for (INT32 index = 0; index < _current_associativity; index++)
+                    {
+                        lru_list.push_back(index);
+                    }
+                }
+                UINT32 GetAssociativity(UINT32 associativity) { return _current_associativity; }
 
-/*!
- *  @brief Cache set with least recently used replacement policy
- */
-template <UINT32 MAX_ASSOCIATIVITY = 16>
-class LEAST_RECENTLY_USED
-{
-  private:
-    CACHE_TAG _tags[MAX_ASSOCIATIVITY];
-    //vector contains indexes into _tags, the LRU _tag index in vector pos 0, MRU _tag index in vector pos (vector.size() - 1)
-    vector<UINT32> lru_list;
-    UINT32 _current_associativity;
+                VOID SetMostRecentlyUsed(UINT32 value)
+                {
+                    UINT32 index = 0;
+                    for(index = 0; index < _current_associativity; index++){
+                        if(lru_list[index] == value){
+                            //moving the value to the most recently used slot
+                            lru_list.erase(lru_list.begin() + index, lru_list.begin() + index + 1);
+                            lru_list.push_back(value);
+                            return;
+                        }
+                    }
+                    ASSERTX(false && "index was not found in the lru_list");
+                }
 
-  public:
-    LEAST_RECENTLY_USED(UINT32 associativity = MAX_ASSOCIATIVITY)
-      : _current_associativity(associativity) 
-    {
-        ASSERTX(associativity <= MAX_ASSOCIATIVITY);
+                UINT32 Find(CACHE_TAG tag)
+                {
 
-        for (INT32 index = 0; index < _current_associativity; index++)
+                    for (UINT32 index = 0; index < _current_associativity; index++)
+                    {
+                        //searching for the tag
+                        if(_tags[index] == tag){
+                            //need to update the lru list
+                            SetMostRecentlyUsed(index);
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                VOID Replace(CACHE_TAG tag)
+                {
+                    //this is the least recently used index
+                    const UINT32 index = lru_list[0];
+
+                    _tags[index] = tag;
+                    // condition typically faster than modulo
+                    SetMostRecentlyUsed(index);
+                }
+        };
+
+    //FIXME this still needs to be finished
+    /*!
+     *  @brief Cache set with a PSEUDO least recently used replacement policy
+     */
+    template <UINT32 MAX_ASSOCIATIVITY = 16>
+        class PSEUDO_LRU
         {
-            _tags[index] = CACHE_TAG(0);
-            //arbitrarily setting intial LRU ordering (_tag[0] is the LRU initially)
-            lru_list.push_back(index);
-        }
-    }
+            private:
+                CACHE_TAG _tags[MAX_ASSOCIATIVITY];
+                UINT8 _lru_tree[MAX_ASSOCIATIVITY-1];
+                vector<UINT32> lru_list;
+                UINT32 _current_associativity;
 
-    VOID SetAssociativity(UINT32 associativity)
-    {
-        ASSERTX(associativity <= MAX_ASSOCIATIVITY);
-        _current_associativity = associativity;
-        lru_list.clear();
-        for (INT32 index = 0; index < _current_associativity; index++)
-        {
-            lru_list.push_back(index);
-        }
-    }
-    UINT32 GetAssociativity(UINT32 associativity) { return _current_associativity; }
+            public:
+                PSEUDO_LRU(UINT32 associativity = MAX_ASSOCIATIVITY)
+                    : _current_associativity(associativity) 
+                {
+                    ASSERTX(associativity <= MAX_ASSOCIATIVITY);
+                    ASSERTX(false && "the pseudo lru pass isn't finished yet...");
 
-    VOID SetMostRecentlyUsed(UINT32 value)
-    {
-        UINT32 index = 0;
-        for(index = 0; index < _current_associativity; index++){
-            if(lru_list[index] == value){
-                //moving the value to the most recently used slot
-                lru_list.erase(lru_list.begin() + index, lru_list.begin() + index + 1);
-                lru_list.push_back(value);
-                return;
-            }
-        }
-        ASSERTX(false && "index was not found in the lru_list");
-    }
-    
-    UINT32 Find(CACHE_TAG tag)
-    {
+                    for (INT32 index = 0; index < _current_associativity; index++)
+                    {
+                        _tags[index] = CACHE_TAG(0);
+                        lru_list.push_back(index);
+                    }
+                    //this is for the tree setting impossible options
+                    int level = 1;
+                    while(_current_associativity + 1 < MAX_ASSOCIATIVITY / level){
+                        //FIXME this isn't quite right yet
+                        INT32 start = _current_associativity / level + (_current_associativity % level) * 1;
+                        for(INT32 index = start; index < MAX_ASSOCIATIVITY / level; index++){
+                            _lru_tree[index] = 0xFF; //saying this is invalid
+                        }
+                        level++;
+                    }
+                }
 
-        for (UINT32 index = 0; index < _current_associativity; index++)
-        {
-            //searching for the tag
-            if(_tags[index] == tag){
-                //need to update the lru list
-                SetMostRecentlyUsed(index);
-                return true;
-            }
-        }
+                VOID SetAssociativity(UINT32 associativity)
+                {
+                    ASSERTX(associativity <= MAX_ASSOCIATIVITY);
+                    _current_associativity = associativity;
+                    lru_list.clear();
+                    for (INT32 index = 0; index < _current_associativity; index++)
+                    {
+                        lru_list.push_back(index);
+                    }
+                }
+                UINT32 GetAssociativity(UINT32 associativity) { return _current_associativity; }
 
-        return false;
-    }
+                VOID SetMostRecentlyUsed(UINT32 value)
+                {
+                    UINT32 index = 0;
+                    for(index = 0; index < _current_associativity; index++){
+                        if(lru_list[index] == value){
+                            //moving the value to the most recently used slot
+                            lru_list.erase(lru_list.begin() + index, lru_list.begin() + index + 1);
+                            lru_list.push_back(value);
+                            return;
+                        }
+                    }
+                    ASSERTX(false && "index was not found in the lru_list");
+                }
 
-    VOID Replace(CACHE_TAG tag)
-    {
-        //this is the least recently used index
-        const UINT32 index = lru_list[0];
+                UINT32 Find(CACHE_TAG tag)
+                {
 
-        _tags[index] = tag;
-        // condition typically faster than modulo
-        SetMostRecentlyUsed(index);
-    }
-};
+                    for (UINT32 index = 0; index < _current_associativity; index++)
+                    {
+                        //searching for the tag
+                        if(_tags[index] == tag){
+                            //need to update the lru list
+                            SetMostRecentlyUsed(index);
+                            return true;
+                        }
+                    }
 
-//FIXME this still needs to be finished
-/*!
- *  @brief Cache set with a PSEUDO least recently used replacement policy
- */
-template <UINT32 MAX_ASSOCIATIVITY = 16>
-class PSEUDO_LRU
-{
-  private:
-    CACHE_TAG _tags[MAX_ASSOCIATIVITY];
-    UINT8 _lru_tree[MAX_ASSOCIATIVITY-1];
-    vector<UINT32> lru_list;
-    UINT32 _current_associativity;
+                    return false;
+                }
 
-  public:
-    PSEUDO_LRU(UINT32 associativity = MAX_ASSOCIATIVITY)
-      : _current_associativity(associativity) 
-    {
-        ASSERTX(associativity <= MAX_ASSOCIATIVITY);
-        ASSERTX(false && "the pseudo lru pass isn't finished yet...");
+                VOID Replace(CACHE_TAG tag)
+                {
+                    //this is the least recently used index
+                    const UINT32 index = lru_list[0];
 
-        for (INT32 index = 0; index < _current_associativity; index++)
-        {
-            _tags[index] = CACHE_TAG(0);
-            lru_list.push_back(index);
-        }
-        //this is for the tree setting impossible options
-        int level = 1;
-        while(_current_associativity + 1 < MAX_ASSOCIATIVITY / level){
-            //FIXME this isn't quite right yet
-            INT32 start = _current_associativity / level + (_current_associativity % level) * 1;
-            for(INT32 index = start; index < MAX_ASSOCIATIVITY / level; index++){
-                _lru_tree[index] = 0xFF; //saying this is invalid
-            }
-            level++;
-        }
-    }
-
-    VOID SetAssociativity(UINT32 associativity)
-    {
-        ASSERTX(associativity <= MAX_ASSOCIATIVITY);
-        _current_associativity = associativity;
-        lru_list.clear();
-        for (INT32 index = 0; index < _current_associativity; index++)
-        {
-            lru_list.push_back(index);
-        }
-    }
-    UINT32 GetAssociativity(UINT32 associativity) { return _current_associativity; }
-
-    VOID SetMostRecentlyUsed(UINT32 value)
-    {
-        UINT32 index = 0;
-        for(index = 0; index < _current_associativity; index++){
-            if(lru_list[index] == value){
-                //moving the value to the most recently used slot
-                lru_list.erase(lru_list.begin() + index, lru_list.begin() + index + 1);
-                lru_list.push_back(value);
-                return;
-            }
-        }
-        ASSERTX(false && "index was not found in the lru_list");
-    }
-    
-    UINT32 Find(CACHE_TAG tag)
-    {
-
-        for (UINT32 index = 0; index < _current_associativity; index++)
-        {
-            //searching for the tag
-            if(_tags[index] == tag){
-                //need to update the lru list
-                SetMostRecentlyUsed(index);
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    VOID Replace(CACHE_TAG tag)
-    {
-        //this is the least recently used index
-        const UINT32 index = lru_list[0];
-
-        _tags[index] = tag;
-        // condition typically faster than modulo
-        SetMostRecentlyUsed(index);
-    }
-};
+                    _tags[index] = tag;
+                    // condition typically faster than modulo
+                    SetMostRecentlyUsed(index);
+                }
+        };
 
 } // namespace CACHE_SET
 
@@ -382,85 +382,93 @@ namespace CACHE_ALLOC
  */
 class CACHE_BASE
 {
-  public:
-    // types, constants
-    typedef enum 
-    {
-        ACCESS_TYPE_LOAD,
-        ACCESS_TYPE_STORE,
-        ACCESS_TYPE_NUM
-    } ACCESS_TYPE;
-
-    typedef enum
-    {
-        CACHE_TYPE_ICACHE,
-        CACHE_TYPE_DCACHE,
-        CACHE_TYPE_NUM
-    } CACHE_TYPE;
-
-  protected:
-    static const UINT32 HIT_MISS_NUM = 2;
-    CACHE_STATS _access[ACCESS_TYPE_NUM][HIT_MISS_NUM];
-
-  private:    // input params
-    const std::string _name;
-    const UINT32 _cacheSize;
-    const UINT32 _lineSize;
-    const UINT32 _associativity;
-
-    // computed params
-    const UINT32 _lineShift;
-    const UINT32 _setIndexMask;
-
-    CACHE_STATS SumAccess(bool hit) const
-    {
-        CACHE_STATS sum = 0;
-
-        for (UINT32 accessType = 0; accessType < ACCESS_TYPE_NUM; accessType++)
+    public:
+        // types, constants
+        typedef enum 
         {
-            sum += _access[accessType][hit];
+            ACCESS_TYPE_LOAD,
+            ACCESS_TYPE_STORE,
+            ACCESS_TYPE_NUM
+        } ACCESS_TYPE;
+
+        typedef enum
+        {
+            CACHE_TYPE_ICACHE,
+            CACHE_TYPE_DCACHE,
+            CACHE_TYPE_NUM
+        } CACHE_TYPE;
+
+    protected:
+        static const UINT32 HIT_MISS_NUM = 2;
+        CACHE_STATS _access[ACCESS_TYPE_NUM][HIT_MISS_NUM];
+
+    private:    // input params
+        const std::string _name;
+        const UINT32 _cacheSize;
+        const UINT32 _lineSize;
+        const UINT32 _associativity;
+
+        // computed params
+        const UINT32 _lineShift;
+        const UINT32 _setIndexMask;
+
+        CACHE_STATS SumAccess(bool hit) const
+        {
+            CACHE_STATS sum = 0;
+
+            for (UINT32 accessType = 0; accessType < ACCESS_TYPE_NUM; accessType++)
+            {
+                sum += _access[accessType][hit];
+            }
+
+            return sum;
         }
 
-        return sum;
-    }
+    protected:
+        UINT32 NumSets() const { return _setIndexMask + 1; }
 
-  protected:
-    UINT32 NumSets() const { return _setIndexMask + 1; }
+    public:
+        // constructors/destructors
+        CACHE_BASE(std::string name, UINT32 cacheSize, UINT32 lineSize, UINT32 associativity);
 
-  public:
-    // constructors/destructors
-    CACHE_BASE(std::string name, UINT32 cacheSize, UINT32 lineSize, UINT32 associativity);
+        // accessors
+        UINT32 CacheSize() const { return _cacheSize; }
+        UINT32 LineSize() const { return _lineSize; }
+        UINT32 Associativity() const { return _associativity; }
+        //
+        CACHE_STATS Hits(ACCESS_TYPE accessType) const { return _access[accessType][true];}
+        CACHE_STATS Misses(ACCESS_TYPE accessType) const { return _access[accessType][false];}
+        CACHE_STATS Accesses(ACCESS_TYPE accessType) const { return Hits(accessType) + Misses(accessType);}
+        CACHE_STATS Hits() const { return SumAccess(true);}
+        CACHE_STATS Misses() const { return SumAccess(false);}
+        CACHE_STATS Accesses() const { return Hits() + Misses();}
 
-    // accessors
-    UINT32 CacheSize() const { return _cacheSize; }
-    UINT32 LineSize() const { return _lineSize; }
-    UINT32 Associativity() const { return _associativity; }
-    //
-    CACHE_STATS Hits(ACCESS_TYPE accessType) const { return _access[accessType][true];}
-    CACHE_STATS Misses(ACCESS_TYPE accessType) const { return _access[accessType][false];}
-    CACHE_STATS Accesses(ACCESS_TYPE accessType) const { return Hits(accessType) + Misses(accessType);}
-    CACHE_STATS Hits() const { return SumAccess(true);}
-    CACHE_STATS Misses() const { return SumAccess(false);}
-    CACHE_STATS Accesses() const { return Hits() + Misses();}
+        VOID clearCacheStats(){
+            for (UINT32 accessType = 0; accessType < ACCESS_TYPE_NUM; accessType++)
+            {
+                _access[accessType][false] = 0;
+                _access[accessType][true] = 0;
+            }
+        }
 
-    VOID SplitAddress(const ADDRINT addr, CACHE_TAG & tag, UINT32 & setIndex) const
-    {
-        tag = addr >> _lineShift;
-        setIndex = tag & _setIndexMask;
-    }
+        VOID SplitAddress(const ADDRINT addr, CACHE_TAG & tag, UINT32 & setIndex) const
+        {
+            tag = addr >> _lineShift;
+            setIndex = tag & _setIndexMask;
+        }
 
-    VOID SplitAddress(const ADDRINT addr, CACHE_TAG & tag, UINT32 & setIndex, UINT32 & lineIndex) const
-    {
-        const UINT32 lineMask = _lineSize - 1;
-        lineIndex = addr & lineMask;
-        SplitAddress(addr, tag, setIndex);
-    }
+        VOID SplitAddress(const ADDRINT addr, CACHE_TAG & tag, UINT32 & setIndex, UINT32 & lineIndex) const
+        {
+            const UINT32 lineMask = _lineSize - 1;
+            lineIndex = addr & lineMask;
+            SplitAddress(addr, tag, setIndex);
+        }
 
-    string StatsLong(string prefix = "", CACHE_TYPE = CACHE_TYPE_DCACHE) const;
+        string StatsLong(string prefix = "", CACHE_TYPE = CACHE_TYPE_DCACHE) const;
 };
 
-CACHE_BASE::CACHE_BASE(std::string name, UINT32 cacheSize, UINT32 lineSize, UINT32 associativity)
-  : _name(name),
+    CACHE_BASE::CACHE_BASE(std::string name, UINT32 cacheSize, UINT32 lineSize, UINT32 associativity)
+: _name(name),
     _cacheSize(cacheSize),
     _lineSize(lineSize),
     _associativity(associativity),
@@ -488,43 +496,43 @@ string CACHE_BASE::StatsLong(string prefix, CACHE_TYPE cache_type) const
     const UINT32 numberWidth = 12;
 
     string out;
-    
+
     out += prefix + _name + ":" + "\n";
 
     if (cache_type != CACHE_TYPE_ICACHE) {
-       for (UINT32 i = 0; i < ACCESS_TYPE_NUM; i++)
-       {
-           const ACCESS_TYPE accessType = ACCESS_TYPE(i);
+        for (UINT32 i = 0; i < ACCESS_TYPE_NUM; i++)
+        {
+            const ACCESS_TYPE accessType = ACCESS_TYPE(i);
 
-           std::string type(accessType == ACCESS_TYPE_LOAD ? "Load" : "Store");
+            std::string type(accessType == ACCESS_TYPE_LOAD ? "Load" : "Store");
 
-           out += prefix + ljstr(type + "-Hits:      ", headerWidth)
-                  + mydecstr(Hits(accessType), numberWidth)  +
-                  "  " +fltstr(100.0 * Hits(accessType) / Accesses(accessType), 2, 6) + "%\n";
+            out += prefix + ljstr(type + "-Hits:      ", headerWidth)
+                + mydecstr(Hits(accessType), numberWidth)  +
+                "  " +fltstr(100.0 * Hits(accessType) / Accesses(accessType), 2, 6) + "%\n";
 
-           out += prefix + ljstr(type + "-Misses:    ", headerWidth)
-                  + mydecstr(Misses(accessType), numberWidth) +
-                  "  " +fltstr(100.0 * Misses(accessType) / Accesses(accessType), 2, 6) + "%\n";
-        
-           out += prefix + ljstr(type + "-Accesses:  ", headerWidth)
-                  + mydecstr(Accesses(accessType), numberWidth) +
-                  "  " +fltstr(100.0 * Accesses(accessType) / Accesses(accessType), 2, 6) + "%\n";
-        
-           out += prefix + "\n";
-       }
+            out += prefix + ljstr(type + "-Misses:    ", headerWidth)
+                + mydecstr(Misses(accessType), numberWidth) +
+                "  " +fltstr(100.0 * Misses(accessType) / Accesses(accessType), 2, 6) + "%\n";
+
+            out += prefix + ljstr(type + "-Accesses:  ", headerWidth)
+                + mydecstr(Accesses(accessType), numberWidth) +
+                "  " +fltstr(100.0 * Accesses(accessType) / Accesses(accessType), 2, 6) + "%\n";
+
+            out += prefix + "\n";
+        }
     }
 
     out += prefix + ljstr("Total-Hits:      ", headerWidth)
-           + mydecstr(Hits(), numberWidth) +
-           "  " +fltstr(100.0 * Hits() / Accesses(), 2, 6) + "%\n";
+        + mydecstr(Hits(), numberWidth) +
+        "  " +fltstr(100.0 * Hits() / Accesses(), 2, 6) + "%\n";
 
     out += prefix + ljstr("Total-Misses:    ", headerWidth)
-           + mydecstr(Misses(), numberWidth) +
-           "  " +fltstr(100.0 * Misses() / Accesses(), 2, 6) + "%\n";
+        + mydecstr(Misses(), numberWidth) +
+        "  " +fltstr(100.0 * Misses() / Accesses(), 2, 6) + "%\n";
 
     out += prefix + ljstr("Total-Accesses:  ", headerWidth)
-           + mydecstr(Accesses(), numberWidth) +
-           "  " +fltstr(100.0 * Accesses() / Accesses(), 2, 6) + "%\n";
+        + mydecstr(Accesses(), numberWidth) +
+        "  " +fltstr(100.0 * Accesses() / Accesses(), 2, 6) + "%\n";
     out += "\n";
 
     return out;
@@ -540,34 +548,34 @@ string CACHE_BASE::StatsLong(string prefix, CACHE_TYPE cache_type) const
 template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 class CACHE : public CACHE_BASE
 {
-  private:
-    SET _sets[MAX_SETS];
+    private:
+        SET _sets[MAX_SETS];
 
-  public:
-    // constructors/destructors
-    CACHE(std::string name, UINT32 cacheSize, UINT32 lineSize, UINT32 associativity)
-      : CACHE_BASE(name, cacheSize, lineSize, associativity)
-    {
-        ASSERTX(NumSets() <= MAX_SETS);
-
-        for (UINT32 i = 0; i < NumSets(); i++)
+    public:
+        // constructors/destructors
+        CACHE(std::string name, UINT32 cacheSize, UINT32 lineSize, UINT32 associativity)
+            : CACHE_BASE(name, cacheSize, lineSize, associativity)
         {
-            _sets[i].SetAssociativity(associativity);
-        }
-    }
+            ASSERTX(NumSets() <= MAX_SETS);
 
-    // modifiers
-    /// Cache access from addr to addr+size-1
-    bool Access(ADDRINT addr, UINT32 size, ACCESS_TYPE accessType);
-    /// Cache access at addr that does not span cache lines
-    bool AccessSingleLine(ADDRINT addr, ACCESS_TYPE accessType);
+            for (UINT32 i = 0; i < NumSets(); i++)
+            {
+                _sets[i].SetAssociativity(associativity);
+            }
+        }
+
+        // modifiers
+        /// Cache access from addr to addr+size-1
+        bool Access(ADDRINT addr, UINT32 size, ACCESS_TYPE accessType);
+        /// Cache access at addr that does not span cache lines
+        bool AccessSingleLine(ADDRINT addr, ACCESS_TYPE accessType);
 };
 
 /*!
  *  @return true if all accessed cache lines hit
  */
 
-template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
+    template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 bool CACHE<SET,MAX_SETS,STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size, ACCESS_TYPE accessType)
 {
     const ADDRINT highAddr = addr + size;
@@ -605,7 +613,7 @@ bool CACHE<SET,MAX_SETS,STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size, ACC
 /*!
  *  @return true if accessed cache line hits
  */
-template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
+    template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 bool CACHE<SET,MAX_SETS,STORE_ALLOCATION>::AccessSingleLine(ADDRINT addr, ACCESS_TYPE accessType)
 {
     CACHE_TAG tag;

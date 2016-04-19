@@ -34,6 +34,8 @@
 //also list the cache hits (this is for mem footprint numbers) --done
 
 
+VOID printCacheStats();
+VOID accumulateCacheStats();
 
 static std::ostream * out = &cerr;
 static PIN_LOCK lock;
@@ -49,6 +51,10 @@ static BOOL somethingFailed = false;
 
 static map<ADDRINT, ADDRINT> page_table;
 static ADDRINT next_page = 0;
+
+UINT64 total_accesses = 0;
+UINT64 total_hits = 0;
+UINT64 total_misses = 0;
 
 
 namespace LLC
@@ -201,7 +207,7 @@ BOOL accessCache(ADDRINT addr, CACHE_BASE::ACCESS_TYPE access){
 }
 
 VOID writeOutMemLog(){
-    cerr << "writing out log" << endl;
+    //cerr << "writing out log" << endl;
     for(UINT64 i = 0; i < arrayOffset; i++){
         MEM_INFO &data = memValues[i];
         //splitting it up into as many addresses as necessary
@@ -343,15 +349,17 @@ VOID Trace(TRACE trace, VOID *v)
 
 VOID CallSimulationBegin(THREADID threadid){
     gcThreadid = threadid;
-    //want to start fresh for next execution
-    //TODO also want to clear the cache I think...
-    page_table.clear();
-    next_page = 0;
+    //want to make sure the cache stats are cleared
+    llc->clearCacheStats();
     withinGC = true;
     PIN_RemoveInstrumentation();
 }
 
 VOID CallSimulationEnd(THREADID threadid){
+    //need to print out results right here
+    writeOutMemLog();
+    printCacheStats();
+    accumulateCacheStats();
     withinGC = false;
     PIN_RemoveInstrumentation();
 }
@@ -378,6 +386,33 @@ VOID Routine(RTN rtn, VOID* v)
     RTN_Close(rtn);
 }
 
+VOID accumulateCacheStats(){
+        UINT64 accesses, hits, misses;
+        accesses = llc->Accesses();
+        hits = llc->Hits();
+        misses = llc->Misses();
+        total_accesses += accesses;
+        total_hits += hits;
+        total_misses += misses;
+}
+
+VOID printCacheStats(){
+    if(KnobSimulateCache){
+        *out << "*****SESSION CACHE INFO*****" << endl;
+        UINT64 accesses, hits, misses;
+        double hit_rate, miss_rate;
+        accesses = llc->Accesses();
+        hits = llc->Hits();
+        misses = llc->Misses();
+        hit_rate = 1.0 * hits / accesses * 100;
+        miss_rate = 1.0 * misses / accesses * 100;
+        *out << "Total Accesses: " << accesses << endl;
+        *out << "Total Hits: " << hits << endl;
+        *out << "Total Misses: " << misses << endl;
+        *out << "Hit Rate: " << hit_rate << endl;
+        *out << "Miss Rate: " << miss_rate << endl;
+    }
+}
 
 //printing this out when a failure occurs
 VOID failurePrintout(const char *message){
@@ -401,17 +436,21 @@ VOID Fini(INT32 code, VOID *v)
         cerr << "something failed: these results are not valid" << endl;
         return;
     }
-    //writing out remaining mem accesses
-    writeOutMemLog();
+
+    if(KnobMonitorFromStart){
+        //need to take care of this if the cache was never finished
+        writeOutMemLog();
+        accumulateCacheStats();
+    }
 
     //printing out cache info (if cache used)
     if(KnobSimulateCache){
-        *out << "*****CACHE INFO*****" << endl;
+        *out << "*****FINAL CACHE INFO*****" << endl;
         UINT64 accesses, hits, misses;
         double hit_rate, miss_rate;
-        accesses = llc->Accesses();
-        hits = llc->Hits();
-        misses = llc->Misses();
+        accesses = total_accesses;
+        hits = total_hits;
+        misses = total_misses;
         hit_rate = 1.0 * hits / accesses * 100;
         miss_rate = 1.0 * misses / accesses * 100;
         *out << "Total Accesses: " << accesses << endl;
