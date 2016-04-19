@@ -34,8 +34,16 @@
 //also list the cache hits (this is for mem footprint numbers) --done
 
 
+typedef enum{
+    LOAD_OP=1,
+    STORE_OP=2,
+    INSTRUCTION_OP=4
+}mem_operations;
+
 VOID printCacheStats();
 VOID accumulateCacheStats();
+VOID printFootprintInfo();
+VOID recordInFootprint(ADDRINT addr, mem_operations mem_type);
 
 static std::ostream * out = &cerr;
 static PIN_LOCK lock;
@@ -55,6 +63,9 @@ static ADDRINT next_page = 0;
 UINT64 total_accesses = 0;
 UINT64 total_hits = 0;
 UINT64 total_misses = 0;
+
+map<ADDRINT, UINT8> gcFootprint;
+const unsigned int FOOTPRINT_CATEGORIES = 8;
 
 
 namespace LLC
@@ -78,12 +89,6 @@ LLC::CACHE* llc = NULL;
 /* ===================================================================== */
 // Helper Classes
 /* ===================================================================== */
-
-typedef enum{
-    LOAD_OP=0,
-    STORE_OP,
-    INSTRUCTION_OP
-}mem_operations;
 
 struct MEM_INFO{
     ADDRINT address;
@@ -221,6 +226,7 @@ VOID writeOutMemLog(){
             if(KnobVirtualAddressTranslation){
                 real_addr = convertVirtualToPhysical(addr);
             }
+            recordInFootprint(real_addr, data.mem_op_type);
             //FIXME need to change this to the right type
             //actually don't really think it is necessary
             //logging both the cache hits and misses
@@ -351,14 +357,19 @@ VOID CallSimulationBegin(THREADID threadid){
     gcThreadid = threadid;
     //want to make sure the cache stats are cleared
     llc->clearCacheStats();
+    //also clearing the footprint stats
+    gcFootprint.clear();
     withinGC = true;
     PIN_RemoveInstrumentation();
 }
 
 VOID CallSimulationEnd(THREADID threadid){
     //need to print out results right here
+    //print out the type of gc
+    *out << "GC Type: " << "FIXME" << endl;
     writeOutMemLog();
     printCacheStats();
+    printFootprintInfo();
     accumulateCacheStats();
     withinGC = false;
     PIN_RemoveInstrumentation();
@@ -414,6 +425,43 @@ VOID printCacheStats(){
     }
 }
 
+VOID recordInFootprint(ADDRINT addr, mem_operations mem_type){
+    map<ADDRINT,UINT8>::iterator it =  gcFootprint.find(addr);
+    if (it == gcFootprint.end()) {
+        gcFootprint[addr] = mem_type;
+    }
+    else {
+        gcFootprint[addr] = it->second | mem_type;
+    }
+}
+
+VOID printFootprintInfo(){
+    //determining the footprint results
+    UINT64 footprint_totals[FOOTPRINT_CATEGORIES];
+    for(int i = 0; i < FOOTPRINT_CATEGORIES; i++){
+        footprint_totals[i] = 0;
+    }
+    map<ADDRINT,UINT8>::iterator it =  gcFootprint.begin();
+    for( ; it != gcFootprint.end() ; it++ ) {
+        footprint_totals[it->second]++;
+    }
+    const char* header[] = {
+        /*0*/ "error",
+        /*1*/ "load",
+        /*2*/ "store",
+        /*3*/ "load+store",
+        /*4*/ "code",
+        /*5*/ "load+code",
+        /*6*/ "store+code",
+        /*7*/ "load+store+code",
+    };
+    *out << "*****SESSION FOOTPRINT INFO*****" << endl;
+    for(int i=0; i<FOOTPRINT_CATEGORIES; i++) {
+        *out << setfill(' ') << std::setw(30) << header[i] << "  "  << std::setw(20) << (footprint_totals[i]*ACCESS_SIZE) << " Bytes";
+        *out << std::setw(20) << std::setprecision(4) << ((double)footprint_totals[i]*ACCESS_SIZE/KILO) << " KB" << endl;
+    }
+}
+
 //printing this out when a failure occurs
 VOID failurePrintout(const char *message){
     *out << message << endl;
@@ -440,6 +488,8 @@ VOID Fini(INT32 code, VOID *v)
     if(KnobMonitorFromStart){
         //need to take care of this if the cache was never finished
         writeOutMemLog();
+        printCacheStats();
+        printFootprintInfo();
         accumulateCacheStats();
     }
 
