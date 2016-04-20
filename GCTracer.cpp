@@ -36,6 +36,16 @@
 //also list the cache hits (this is for mem footprint numbers) --done
 
 
+typedef enum{
+    LOAD_OP=1,
+    STORE_OP=2,
+    INSTRUCTION_OP=4
+}mem_operations;
+
+VOID printCacheStats();
+VOID accumulateCacheStats();
+VOID printFootprintInfo();
+VOID recordInFootprint(ADDRINT addr, mem_operations mem_type);
 
 static std::ostream * out = &cerr;
 static PIN_LOCK lock;
@@ -45,11 +55,17 @@ static PIN_RWMUTEX rwlock;
 static int NumArgs = 0;
 static char **Args;
 
+CACHE_BASE::ACCESS_TYPE types[] = {CACHE_BASE::ACCESS_TYPE_LOAD, CACHE_BASE::ACCESS_TYPE_STORE, CACHE_BASE::ACCESS_TYPE_INST};
+const char* typeNames[] = {
+    "Loads",
+    "Stores",
+    "Instructions"
+};
+
 // used for keeping track of the state
 static volatile BOOL withinGC = false;
 //static BOOL withinGC = true;
 
-static THREADID gcThreadid = 0;
 static BOOL somethingFailed = false;
 
 static map<ADDRINT, ADDRINT> page_table;
@@ -58,6 +74,10 @@ static ADDRINT next_page = 0;
 //counters that are thread-safe
 static volatile int numThreads = 0;
 
+UINT64 accessInfo[CACHE_BASE::ACCESS_TYPE_NUM + 1][CACHE_BASE::HIT_MISS_NUM];
+
+map<ADDRINT, UINT8> gcFootprint;
+const unsigned int FOOTPRINT_CATEGORIES = 8;
 
 namespace LLC
 {
@@ -80,12 +100,6 @@ LLC::CACHE* llc = NULL;
 /* ===================================================================== */
 // Helper Classes
 /* ===================================================================== */
-
-typedef enum{
-    LOAD_OP=0,
-    STORE_OP,
-    INSTRUCTION_OP
-}mem_operations;
 
 struct MEM_INFO{
     ADDRINT address;
@@ -207,6 +221,19 @@ BOOL accessCache(ADDRINT addr, CACHE_BASE::ACCESS_TYPE access){
     return llcHit;
 }
 
+CACHE_BASE::ACCESS_TYPE retrieve_ACCESS_TYPE(mem_operations mem_op){
+    switch (mem_op){
+        case LOAD_OP:
+            return CACHE_BASE::ACCESS_TYPE_LOAD;
+        case STORE_OP:
+            return CACHE_BASE::ACCESS_TYPE_STORE;
+        case INSTRUCTION_OP:
+            return CACHE_BASE::ACCESS_TYPE_INST;
+    }
+    somethingFailed = true;
+    ASSERTX(false && "Not able to discern the access type");
+}
+
 VOID writeOutMemLog(){
     cerr << "writing out log" << endl;
     for(UINT64 i = 0; i < arrayOffset; i++){
@@ -214,7 +241,7 @@ VOID writeOutMemLog(){
         //splitting it up into as many addresses as necessary
         ADDRINT start = mask(data.address, ACCESS_SIZE);
         ADDRINT end   = mask(data.address + data.access_size - 1, ACCESS_SIZE);
-        const char * access_type = memOpToString(data.mem_op_type);
+        const char * access_type_name = memOpToString(data.mem_op_type);
         for(ADDRINT addr = start ; addr <= end ; addr += ACCESS_SIZE) {
             //printing here
             ADDRINT real_addr = addr;
@@ -222,19 +249,19 @@ VOID writeOutMemLog(){
             if(KnobVirtualAddressTranslation){
                 real_addr = convertVirtualToPhysical(addr);
             }
-            //FIXME need to change this to the right type
-            //actually don't really think it is necessary
+            recordInFootprint(real_addr, data.mem_op_type);
             //logging both the cache hits and misses
-            if(KnobSimulateCache && accessCache(real_addr, CACHE_BASE::ACCESS_TYPE_LOAD)){
+            CACHE_BASE::ACCESS_TYPE access_type = retrieve_ACCESS_TYPE(data.mem_op_type);
+            if(KnobSimulateCache && accessCache(real_addr, access_type)){
                 //may want to record these are well
                 if(KnobPrintCacheHits){
                     *out << "0x" << std::hex << std::uppercase << setw(16) <<  setfill('0') << real_addr <<
-                        " " << "CACHE HIT " << access_type << std::nouppercase << std::dec << 
+                        " " << "CACHE HIT " << access_type_name << std::nouppercase << std::dec << 
                         data.cycle_num << endl;
                 }
             }else{
                 *out << "0x" << std::hex << std::uppercase << setw(16) <<  setfill('0') << real_addr <<
-                    " " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
+                    " " << access_type_name << std::nouppercase << std::dec << data.cycle_num << endl;
             }
         }
     }
@@ -256,11 +283,6 @@ VOID writeOutMemLog(){
 //
 
 VOID PIN_FAST_ANALYSIS_CALL record_mem(THREADID threadid, ADDRINT memea, UINT32 length, UINT32 mem_type) {
-    //TODO need to have something different for this
-    if(threadid != gcThreadid){
-        return;
-    }
-
     bool finished = false;
     UINT64 indexValue;
     UINT64 newValue;
@@ -286,8 +308,8 @@ VOID PIN_FAST_ANALYSIS_CALL record_mem(THREADID threadid, ADDRINT memea, UINT32 
             //NOTE: i'm pretty sure it tries to prevent writer starvation
             //attaining writing lock
             PIN_RWMutexWriteLock(&rwlock);
-                writeOutMemLog();
-                ATOMIC::OPS::Store<UINT64>(&arrayOffset, 0);
+            writeOutMemLog();
+            ATOMIC::OPS::Store<UINT64>(&arrayOffset, 0);
             PIN_RWMutexUnlock(&rwlock);
             //now will re-execute and try to get a real position
         }
@@ -381,17 +403,27 @@ VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
 
 
 VOID CallSimulationBegin(THREADID threadid){
-    gcThreadid = threadid;
-    //want to start fresh for next execution
-    //TODO also want to clear the cache I think...
-    page_table.clear();
-    next_page = 0;
-    withinGC = true;
+    PIN_RWMutexWriteLock(&rwlock);
+    //want to make sure the cache stats are cleared
+    llc->clearCacheStats();
+    //also clearing the footprint stats
+    gcFootprint.clear();
+    ATOMIC::OPS::Store<BOOL>(&withinGC, true);
+    PIN_RWMutexUnlock(&rwlock);
     PIN_RemoveInstrumentation();
 }
 
 VOID CallSimulationEnd(THREADID threadid){
-    withinGC = false;
+    //probably should write out memory to log here
+    PIN_RWMutexWriteLock(&rwlock);
+    ATOMIC::OPS::Store<BOOL>(&withinGC, false);
+    //FIXME need to print out the proper GC type here (full or local)
+    *out << "GC Type: " << "FIXME" << endl;
+    writeOutMemLog();
+    printCacheStats();
+    printFootprintInfo();
+    accumulateCacheStats();
+    PIN_RWMutexUnlock(&rwlock);
     PIN_RemoveInstrumentation();
 }
 
@@ -417,6 +449,86 @@ VOID Routine(RTN rtn, VOID* v)
     RTN_Close(rtn);
 }
 
+VOID accumulateCacheStats(){
+    int i = 0;
+    for(; i < CACHE_BASE::ACCESS_TYPE_NUM; i++){
+        accessInfo[i][false] = llc->Misses(types[i]);
+        accessInfo[i][true] = llc->Hits(types[i]);
+    }
+    accessInfo[i][false] = llc->Misses();
+    accessInfo[i][true] = llc->Hits();
+}
+
+VOID printCacheStats(){
+    if(KnobSimulateCache){
+        *out << "*****SESSION CACHE INFO*****" << endl;
+        int i = 0;
+        UINT64 temp_hits, temp_misses, temp_accesses;
+        double temp_hit_rate, temp_miss_rate;
+        for(; i < CACHE_BASE::ACCESS_TYPE_NUM; i++){
+            temp_misses = llc->Misses(types[i]);
+            temp_hits = llc->Hits(types[i]);
+            temp_accesses = temp_hits + temp_misses;
+            temp_hit_rate = 1.0 * temp_hits / temp_accesses * 100;
+            temp_miss_rate = 1.0 * temp_misses / temp_accesses * 100;
+            *out << "Cache Type: " << typeNames[i] << endl;
+            *out << "Total Accesses: " << temp_accesses << endl;
+            *out << "Total Hits: " << temp_hits << endl;
+            *out << "Total Misses: " << temp_misses << endl;
+            *out << "Hit Rate: " << temp_hit_rate << endl;
+            *out << "Miss Rate: " << temp_miss_rate << endl;
+            *out << endl;
+        }
+        temp_misses = llc->Misses();
+        temp_hits = llc->Hits();
+        temp_accesses = temp_hits + temp_misses;
+        temp_hit_rate = 1.0 * temp_hits / temp_accesses * 100;
+        temp_miss_rate = 1.0 * temp_misses / temp_accesses * 100;
+        *out << "Cache Type: Everything" << endl;
+        *out << "Total Accesses: " << temp_accesses << endl;
+        *out << "Total Hits: " << temp_hits << endl;
+        *out << "Total Misses: " << temp_misses << endl;
+        *out << "Hit Rate: " << temp_hit_rate << endl;
+        *out << "Miss Rate: " << temp_miss_rate << endl;
+    }
+}
+
+VOID recordInFootprint(ADDRINT addr, mem_operations mem_type){
+    map<ADDRINT,UINT8>::iterator it =  gcFootprint.find(addr);
+    if (it == gcFootprint.end()) {
+        gcFootprint[addr] = mem_type;
+    }
+    else {
+        gcFootprint[addr] = it->second | mem_type;
+    }
+}
+
+VOID printFootprintInfo(){
+    //determining the footprint results
+    UINT64 footprint_totals[FOOTPRINT_CATEGORIES];
+    for(int i = 0; i < FOOTPRINT_CATEGORIES; i++){
+        footprint_totals[i] = 0;
+    }
+    map<ADDRINT,UINT8>::iterator it =  gcFootprint.begin();
+    for( ; it != gcFootprint.end() ; it++ ) {
+        footprint_totals[it->second]++;
+    }
+    const char* header[] = {
+        /*0*/ "error",
+        /*1*/ "load",
+        /*2*/ "store",
+        /*3*/ "load+store",
+        /*4*/ "code",
+        /*5*/ "load+code",
+        /*6*/ "store+code",
+        /*7*/ "load+store+code",
+    };
+    *out << "*****SESSION FOOTPRINT INFO*****" << endl;
+    for(int i=0; i<FOOTPRINT_CATEGORIES; i++) {
+        *out << setfill(' ') << std::setw(30) << header[i] << "  "  << std::setw(20) << (footprint_totals[i]*ACCESS_SIZE) << " Bytes";
+        *out << std::setw(20) << std::setprecision(4) << ((double)footprint_totals[i]*ACCESS_SIZE/KILO) << " KB" << endl;
+    }
+}
 
 //printing this out when a failure occurs
 VOID failurePrintout(const char *message){
@@ -441,24 +553,49 @@ VOID Fini(INT32 code, VOID *v)
         return;
     }
     //writing out remaining mem accesses
-    writeOutMemLog();
+    //needed lock around this to make sure it is at the right point
+    PIN_RWMutexWriteLock(&rwlock);
+    if(KnobMonitorFromStart){
+        //need to take care of this if the cache was never finished
+        writeOutMemLog();
+        printCacheStats();
+        printFootprintInfo();
+        accumulateCacheStats();
+    }
 
     //printing out cache info (if cache used)
     if(KnobSimulateCache){
-        *out << "*****CACHE INFO*****" << endl;
-        UINT64 accesses, hits, misses;
-        double hit_rate, miss_rate;
-        accesses = llc->Accesses();
-        hits = llc->Hits();
-        misses = llc->Misses();
-        hit_rate = 1.0 * hits / accesses * 100;
-        miss_rate = 1.0 * misses / accesses * 100;
-        *out << "Total Accesses: " << accesses << endl;
-        *out << "Total Hits: " << hits << endl;
-        *out << "Total Misses: " << misses << endl;
-        *out << "Hit Rate: " << hit_rate << endl;
-        *out << "Miss Rate: " << miss_rate << endl;
+        *out << "*****FINAL CACHE INFO*****" << endl;
+        int i = 0;
+        UINT64 temp_hits, temp_misses, temp_accesses;
+        double temp_hit_rate, temp_miss_rate;
+        for(; i < CACHE_BASE::ACCESS_TYPE_NUM; i++){
+            temp_misses = accessInfo[i][false];
+            temp_hits = accessInfo[i][true];
+            temp_accesses = temp_hits + temp_misses;
+            temp_hit_rate = 1.0 * temp_hits / temp_accesses * 100;
+            temp_miss_rate = 1.0 * temp_misses / temp_accesses * 100;
+            *out << "Cache Type: " << typeNames[i] << endl;
+            *out << "Total Accesses: " << temp_accesses << endl;
+            *out << "Total Hits: " << temp_hits << endl;
+            *out << "Total Misses: " << temp_misses << endl;
+            *out << "Hit Rate: " << temp_hit_rate << endl;
+            *out << "Miss Rate: " << temp_miss_rate << endl;
+            *out << endl;
+        }
+        temp_misses = accessInfo[i][false];
+        temp_hits = accessInfo[i][true];
+        temp_accesses = temp_hits + temp_misses;
+        temp_hit_rate = 1.0 * temp_hits / temp_accesses * 100;
+        temp_miss_rate = 1.0 * temp_misses / temp_accesses * 100;
+        *out << "Cache Type: Everything" << endl;
+        *out << "Total Accesses: " << temp_accesses << endl;
+        *out << "Total Hits: " << temp_hits << endl;
+        *out << "Total Misses: " << temp_misses << endl;
+        *out << "Hit Rate: " << temp_hit_rate << endl;
+        *out << "Miss Rate: " << temp_miss_rate << endl;
     }
+    PIN_RWMutexUnlock(&rwlock);
 }
 
 /*!
