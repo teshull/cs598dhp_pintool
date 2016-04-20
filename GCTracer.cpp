@@ -25,7 +25,9 @@
 
 
 //TODO LIST
-//include instructions in the count --don
+//add changes to parallel version
+//add print statement for the type of gc that just completed
+//include instructions in the count --done
 //virtual to physical address translation --done
 //adding cache behaviour --done
 //think about replacement policy for instructions --done
@@ -245,8 +247,6 @@ VOID writeOutMemLog(){
                 real_addr = convertVirtualToPhysical(addr);
             }
             recordInFootprint(real_addr, data.mem_op_type);
-            //FIXME need to change this to the right type
-            //actually don't really think it is necessary
             //logging both the cache hits and misses
             CACHE_BASE::ACCESS_TYPE access_type = retrieve_ACCESS_TYPE(data.mem_op_type);
             if(KnobSimulateCache && accessCache(real_addr, access_type)){
@@ -385,6 +385,7 @@ VOID CallSimulationBegin(THREADID threadid){
 VOID CallSimulationEnd(THREADID threadid){
     //need to print out results right here
     //print out the type of gc
+    //FIXME need to print out the proper GC type here (full or local)
     *out << "GC Type: " << "FIXME" << endl;
     writeOutMemLog();
     printCacheStats();
