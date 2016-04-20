@@ -388,6 +388,7 @@ class CACHE_BASE
         {
             ACCESS_TYPE_LOAD,
             ACCESS_TYPE_STORE,
+            ACCESS_TYPE_INST,
             ACCESS_TYPE_NUM
         } ACCESS_TYPE;
 
@@ -398,8 +399,8 @@ class CACHE_BASE
             CACHE_TYPE_NUM
         } CACHE_TYPE;
 
-    protected:
         static const UINT32 HIT_MISS_NUM = 2;
+    protected:
         CACHE_STATS _access[ACCESS_TYPE_NUM][HIT_MISS_NUM];
 
     private:    // input params
@@ -504,7 +505,14 @@ string CACHE_BASE::StatsLong(string prefix, CACHE_TYPE cache_type) const
         {
             const ACCESS_TYPE accessType = ACCESS_TYPE(i);
 
-            std::string type(accessType == ACCESS_TYPE_LOAD ? "Load" : "Store");
+            std::string type;
+            if(accessType == ACCESS_TYPE_LOAD){
+                type = "Load";
+            }else if(accessType == ACCESS_TYPE_STORE){
+                type = "Store";
+            }else{
+                type = "Instruction";
+            }
 
             out += prefix + ljstr(type + "-Hits:      ", headerWidth)
                 + mydecstr(Hits(accessType), numberWidth)  +
@@ -596,7 +604,7 @@ bool CACHE<SET,MAX_SETS,STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size, ACC
         allHit &= localHit;
 
         // on miss, loads always allocate, stores optionally
-        if ( (! localHit) && (accessType == ACCESS_TYPE_LOAD || STORE_ALLOCATION == CACHE_ALLOC::STORE_ALLOCATE))
+        if ( (! localHit) && ((accessType == ACCESS_TYPE_LOAD || accessType == ACCESS_TYPE_INST) || STORE_ALLOCATION == CACHE_ALLOC::STORE_ALLOCATE))
         {
             set.Replace(tag);
         }
@@ -626,7 +634,7 @@ bool CACHE<SET,MAX_SETS,STORE_ALLOCATION>::AccessSingleLine(ADDRINT addr, ACCESS
     bool hit = set.Find(tag);
 
     // on miss, loads always allocate, stores optionally
-    if ( (! hit) && (accessType == ACCESS_TYPE_LOAD || STORE_ALLOCATION == CACHE_ALLOC::STORE_ALLOCATE))
+    if ( (! hit) && ((accessType == ACCESS_TYPE_LOAD || accessType == ACCESS_TYPE_INST) || STORE_ALLOCATION == CACHE_ALLOC::STORE_ALLOCATE))
     {
         set.Replace(tag);
     }

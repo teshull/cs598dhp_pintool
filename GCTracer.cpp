@@ -50,6 +50,13 @@ static PIN_LOCK lock;
 static int NumArgs = 0;
 static char **Args;
 
+CACHE_BASE::ACCESS_TYPE types[] = {CACHE_BASE::ACCESS_TYPE_LOAD, CACHE_BASE::ACCESS_TYPE_STORE, CACHE_BASE::ACCESS_TYPE_INST};
+const char* typeNames[] = {
+    "Loads",
+    "Stores",
+    "Instructions"
+};
+
 // used for keeping track of the state
 static BOOL withinGC = false;
 //static BOOL withinGC = true;
@@ -60,9 +67,7 @@ static BOOL somethingFailed = false;
 static map<ADDRINT, ADDRINT> page_table;
 static ADDRINT next_page = 0;
 
-UINT64 total_accesses = 0;
-UINT64 total_hits = 0;
-UINT64 total_misses = 0;
+UINT64 accessInfo[CACHE_BASE::ACCESS_TYPE_NUM + 1][CACHE_BASE::HIT_MISS_NUM];
 
 map<ADDRINT, UINT8> gcFootprint;
 const unsigned int FOOTPRINT_CATEGORIES = 8;
@@ -96,7 +101,7 @@ struct MEM_INFO{
     UINT32 access_size;
     UINT64 cycle_num;
     MEM_INFO(ADDRINT addr, mem_operations mem_op, UINT32 size, UINT64 cycle = 0): address(addr), mem_op_type(mem_op), 
-        access_size(size), cycle_num(cycle) {}
+    access_size(size), cycle_num(cycle) {}
     MEM_INFO(): address(0), mem_op_type(LOAD_OP), access_size(0), cycle_num(0) {}
 
 };
@@ -122,11 +127,11 @@ KNOB<BOOL> KnobPrintCacheHits(KNOB_MODE_WRITEONCE,  "pintool",
 KNOB<BOOL> KnobMonitorFromStart(KNOB_MODE_WRITEONCE,  "pintool",
         "mfs", "", "monitor program from the beginning (for testing)");
 KNOB<UINT32> KnobCacheSize(KNOB_MODE_WRITEONCE, "pintool",
-    "c","32", "cache size in kilobytes");
+        "c","32", "cache size in kilobytes");
 KNOB<UINT32> KnobLineSize(KNOB_MODE_WRITEONCE, "pintool",
-    "l","64", "cache line size in bytes");
+        "l","64", "cache line size in bytes");
 KNOB<UINT32> KnobAssociativity(KNOB_MODE_WRITEONCE, "pintool",
-    "a","4", "cache associativity (1 for direct mapped)");
+        "a","4", "cache associativity (1 for direct mapped)");
 
 
 
@@ -211,6 +216,19 @@ BOOL accessCache(ADDRINT addr, CACHE_BASE::ACCESS_TYPE access){
     return llcHit;
 }
 
+CACHE_BASE::ACCESS_TYPE retrieve_ACCESS_TYPE(mem_operations mem_op){
+    switch (mem_op){
+        case LOAD_OP:
+            return CACHE_BASE::ACCESS_TYPE_LOAD;
+        case STORE_OP:
+            return CACHE_BASE::ACCESS_TYPE_STORE;
+        case INSTRUCTION_OP:
+            return CACHE_BASE::ACCESS_TYPE_INST;
+    }
+    somethingFailed = true;
+    ASSERTX(false && "Not able to discern the access type");
+}
+
 VOID writeOutMemLog(){
     //cerr << "writing out log" << endl;
     for(UINT64 i = 0; i < arrayOffset; i++){
@@ -218,7 +236,7 @@ VOID writeOutMemLog(){
         //splitting it up into as many addresses as necessary
         ADDRINT start = mask(data.address, ACCESS_SIZE);
         ADDRINT end   = mask(data.address + data.access_size - 1, ACCESS_SIZE);
-        const char * access_type = memOpToString(data.mem_op_type);
+        const char * access_type_name = memOpToString(data.mem_op_type);
         for(ADDRINT addr = start ; addr <= end ; addr += ACCESS_SIZE) {
             //printing here
             ADDRINT real_addr = addr;
@@ -230,16 +248,17 @@ VOID writeOutMemLog(){
             //FIXME need to change this to the right type
             //actually don't really think it is necessary
             //logging both the cache hits and misses
-            if(KnobSimulateCache && accessCache(real_addr, CACHE_BASE::ACCESS_TYPE_LOAD)){
+            CACHE_BASE::ACCESS_TYPE access_type = retrieve_ACCESS_TYPE(data.mem_op_type);
+            if(KnobSimulateCache && accessCache(real_addr, access_type)){
                 //may want to record these are well
                 if(KnobPrintCacheHits){
                     *out << "0x" << std::hex << std::uppercase << setw(16) <<  setfill('0') << real_addr <<
-                        " " << "CACHE HIT " << access_type << std::nouppercase << std::dec << 
+                        " " << "CACHE HIT " << access_type_name << std::nouppercase << std::dec << 
                         data.cycle_num << endl;
                 }
             }else{
                 *out << "0x" << std::hex << std::uppercase << setw(16) <<  setfill('0') << real_addr <<
-                    " " << access_type << std::nouppercase << std::dec << data.cycle_num << endl;
+                    " " << access_type_name << std::nouppercase << std::dec << data.cycle_num << endl;
             }
         }
     }
@@ -398,30 +417,46 @@ VOID Routine(RTN rtn, VOID* v)
 }
 
 VOID accumulateCacheStats(){
-        UINT64 accesses, hits, misses;
-        accesses = llc->Accesses();
-        hits = llc->Hits();
-        misses = llc->Misses();
-        total_accesses += accesses;
-        total_hits += hits;
-        total_misses += misses;
+    int i = 0;
+    for(; i < CACHE_BASE::ACCESS_TYPE_NUM; i++){
+        accessInfo[i][false] = llc->Misses(types[i]);
+        accessInfo[i][true] = llc->Hits(types[i]);
+    }
+    accessInfo[i][false] = llc->Misses();
+    accessInfo[i][true] = llc->Hits();
 }
 
 VOID printCacheStats(){
     if(KnobSimulateCache){
         *out << "*****SESSION CACHE INFO*****" << endl;
-        UINT64 accesses, hits, misses;
-        double hit_rate, miss_rate;
-        accesses = llc->Accesses();
-        hits = llc->Hits();
-        misses = llc->Misses();
-        hit_rate = 1.0 * hits / accesses * 100;
-        miss_rate = 1.0 * misses / accesses * 100;
-        *out << "Total Accesses: " << accesses << endl;
-        *out << "Total Hits: " << hits << endl;
-        *out << "Total Misses: " << misses << endl;
-        *out << "Hit Rate: " << hit_rate << endl;
-        *out << "Miss Rate: " << miss_rate << endl;
+        int i = 0;
+        UINT64 temp_hits, temp_misses, temp_accesses;
+        double temp_hit_rate, temp_miss_rate;
+        for(; i < CACHE_BASE::ACCESS_TYPE_NUM; i++){
+            temp_misses = llc->Misses(types[i]);
+            temp_hits = llc->Hits(types[i]);
+            temp_accesses = temp_hits + temp_misses;
+            temp_hit_rate = 1.0 * temp_hits / temp_accesses * 100;
+            temp_miss_rate = 1.0 * temp_misses / temp_accesses * 100;
+            *out << "Cache Type: " << typeNames[i] << endl;
+            *out << "Total Accesses: " << temp_accesses << endl;
+            *out << "Total Hits: " << temp_hits << endl;
+            *out << "Total Misses: " << temp_misses << endl;
+            *out << "Hit Rate: " << temp_hit_rate << endl;
+            *out << "Miss Rate: " << temp_miss_rate << endl;
+            *out << endl;
+        }
+        temp_misses = llc->Misses();
+        temp_hits = llc->Hits();
+        temp_accesses = temp_hits + temp_misses;
+        temp_hit_rate = 1.0 * temp_hits / temp_accesses * 100;
+        temp_miss_rate = 1.0 * temp_misses / temp_accesses * 100;
+        *out << "Cache Type: Everything" << endl;
+        *out << "Total Accesses: " << temp_accesses << endl;
+        *out << "Total Hits: " << temp_hits << endl;
+        *out << "Total Misses: " << temp_misses << endl;
+        *out << "Hit Rate: " << temp_hit_rate << endl;
+        *out << "Miss Rate: " << temp_miss_rate << endl;
     }
 }
 
@@ -496,18 +531,34 @@ VOID Fini(INT32 code, VOID *v)
     //printing out cache info (if cache used)
     if(KnobSimulateCache){
         *out << "*****FINAL CACHE INFO*****" << endl;
-        UINT64 accesses, hits, misses;
-        double hit_rate, miss_rate;
-        accesses = total_accesses;
-        hits = total_hits;
-        misses = total_misses;
-        hit_rate = 1.0 * hits / accesses * 100;
-        miss_rate = 1.0 * misses / accesses * 100;
-        *out << "Total Accesses: " << accesses << endl;
-        *out << "Total Hits: " << hits << endl;
-        *out << "Total Misses: " << misses << endl;
-        *out << "Hit Rate: " << hit_rate << endl;
-        *out << "Miss Rate: " << miss_rate << endl;
+        int i = 0;
+        UINT64 temp_hits, temp_misses, temp_accesses;
+        double temp_hit_rate, temp_miss_rate;
+        for(; i < CACHE_BASE::ACCESS_TYPE_NUM; i++){
+            temp_misses = accessInfo[i][false];
+            temp_hits = accessInfo[i][true];
+            temp_accesses = temp_hits + temp_misses;
+            temp_hit_rate = 1.0 * temp_hits / temp_accesses * 100;
+            temp_miss_rate = 1.0 * temp_misses / temp_accesses * 100;
+            *out << "Cache Type: " << typeNames[i] << endl;
+            *out << "Total Accesses: " << temp_accesses << endl;
+            *out << "Total Hits: " << temp_hits << endl;
+            *out << "Total Misses: " << temp_misses << endl;
+            *out << "Hit Rate: " << temp_hit_rate << endl;
+            *out << "Miss Rate: " << temp_miss_rate << endl;
+            *out << endl;
+        }
+        temp_misses = accessInfo[i][false];
+        temp_hits = accessInfo[i][true];
+        temp_accesses = temp_hits + temp_misses;
+        temp_hit_rate = 1.0 * temp_hits / temp_accesses * 100;
+        temp_miss_rate = 1.0 * temp_misses / temp_accesses * 100;
+        *out << "Cache Type: Everything" << endl;
+        *out << "Total Accesses: " << temp_accesses << endl;
+        *out << "Total Hits: " << temp_hits << endl;
+        *out << "Total Misses: " << temp_misses << endl;
+        *out << "Hit Rate: " << temp_hit_rate << endl;
+        *out << "Miss Rate: " << temp_miss_rate << endl;
     }
 }
 
