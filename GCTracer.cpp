@@ -46,6 +46,7 @@ VOID printCacheStats();
 VOID accumulateCacheStats();
 VOID printFootprintInfo();
 VOID recordInFootprint(ADDRINT addr, mem_operations mem_type);
+VOID failurePrintout(const char *message);
 
 static std::ostream * out = &cerr;
 static PIN_LOCK lock;
@@ -186,14 +187,14 @@ const char * memOpToString(mem_operations mem_op){
             break;
         default:
             cerr << "didn't recognize mem op type: " << mem_op << endl;
-            ASSERTX(false && "couldn't recognize mem op type");
+            failurePrintout("couldn't recognize mem op type");
     }
     return "";
 }
 
 ADDRINT retrieveNewPage(){
     if(next_page == MEM_SIZE){
-        ASSERTX(false && "ran out of pages to allocate");
+        failurePrintout("ran out of pages to allocate");
     }
     ADDRINT new_page = next_page;
     next_page += PAGE_SIZE;
@@ -228,7 +229,7 @@ CACHE_BASE::ACCESS_TYPE retrieve_ACCESS_TYPE(mem_operations mem_op){
             return CACHE_BASE::ACCESS_TYPE_INST;
     }
     somethingFailed = true;
-    ASSERTX(false && "Not able to discern the access type");
+    failurePrintout("Not albe to discern the access type");
 }
 
 VOID writeOutMemLog(){
@@ -292,6 +293,46 @@ VOID PIN_FAST_ANALYSIS_CALL record_mem(THREADID threadid, ADDRINT memea, UINT32 
 }
 
 
+
+
+/*!
+ * Increase counter of threads in the application.
+ * This function is called for every thread created by the application when it is
+ * about to start running (including the root thread).
+ * @param[in]   threadIndex     ID assigned by PIN to the new thread
+ * @param[in]   ctxt            initial register state for the new thread
+ * @param[in]   flags           thread creation flags (OS specific)
+ * @param[in]   v               value specified by the tool in the 
+ *                              PIN_AddThreadStartFunction function call
+ */
+
+
+VOID CallSimulationBegin(THREADID threadid){
+    gcThreadid = threadid;
+    //want to make sure the cache stats are cleared
+    llc->clearCacheStats();
+    //also clearing the footprint stats
+    gcFootprint.clear();
+    withinGC = true;
+    PIN_RemoveInstrumentation();
+}
+
+VOID CallSimulationEnd(THREADID threadid, ADDRINT regval = 0){
+    //need to print out results right here
+    writeOutMemLog();
+    const char *gcType = regval == 0? "YOUNG" : "FULL";
+    *out << "Start GC Section Info: Type = " << *gcType << endl;
+    printCacheStats();
+    printFootprintInfo();
+    *out << "End GC Section Info" << endl;
+    accumulateCacheStats();
+    withinGC = false;
+    PIN_RemoveInstrumentation();
+}
+
+VOID CallSimulationExit(THREADID threadid){
+}
+
 /* ===================================================================== */
 // Instrumentation callbacks
 /* ===================================================================== */
@@ -314,6 +355,31 @@ VOID Trace(TRACE trace, VOID *v)
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl))
     {
         for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)){
+            //checking for the beginning and end of gc sections
+            if (INS_IsXchg(ins) && INS_OperandReg(ins, 0) == INS_OperandReg(ins, 1)) {
+                ADDRINT regval = INS_OperandReg(ins, 0);
+                if(regval != REG_R11 && regval != REG_R12){
+                    //have a problem here
+                    failurePrintout("xchg without proper register");
+                }
+                //think i'm actually only going to use the CallSimulationEnd
+                if(regval == REG_R11){
+                    INS_InsertCall(
+                            ins, IPOINT_BEFORE, 
+                            (AFUNPTR)CallSimulationBegin,
+                            IARG_THREAD_ID,
+                            IARG_END);
+                }
+                if(regval == REG_R12){
+                    INS_InsertCall(
+                            ins, IPOINT_BEFORE, 
+                            (AFUNPTR)CallSimulationEnd,
+                            IARG_THREAD_ID,
+                            IARG_REG_VALUE, regval,
+                            IARG_END);
+                }
+            }
+            //don't want to instrument memory accesses if not within gc
             //instrument the code
             unsigned int instruction_bytes = INS_Size(ins);
             INS_InsertPredicatedCall(ins, IPOINT_BEFORE, (AFUNPTR) record_mem,
@@ -359,45 +425,6 @@ VOID Trace(TRACE trace, VOID *v)
     }
 }
 
-
-/*!
- * Increase counter of threads in the application.
- * This function is called for every thread created by the application when it is
- * about to start running (including the root thread).
- * @param[in]   threadIndex     ID assigned by PIN to the new thread
- * @param[in]   ctxt            initial register state for the new thread
- * @param[in]   flags           thread creation flags (OS specific)
- * @param[in]   v               value specified by the tool in the 
- *                              PIN_AddThreadStartFunction function call
- */
-
-
-VOID CallSimulationBegin(THREADID threadid){
-    gcThreadid = threadid;
-    //want to make sure the cache stats are cleared
-    llc->clearCacheStats();
-    //also clearing the footprint stats
-    gcFootprint.clear();
-    withinGC = true;
-    PIN_RemoveInstrumentation();
-}
-
-VOID CallSimulationEnd(THREADID threadid){
-    //need to print out results right here
-    //print out the type of gc
-    //FIXME need to print out the proper GC type here (full or local)
-    *out << "GC Type: " << "FIXME" << endl;
-    writeOutMemLog();
-    printCacheStats();
-    printFootprintInfo();
-    accumulateCacheStats();
-    withinGC = false;
-    PIN_RemoveInstrumentation();
-}
-
-VOID CallSimulationExit(THREADID threadid){
-}
-
 VOID Routine(RTN rtn, VOID* v)
 {
     RTN_Open(rtn);
@@ -429,7 +456,7 @@ VOID accumulateCacheStats(){
 
 VOID printCacheStats(){
     if(KnobSimulateCache){
-        *out << "*****SESSION CACHE INFO*****" << endl;
+        *out << "*****CACHE INFO*****" << endl;
         int i = 0;
         UINT64 temp_hits, temp_misses, temp_accesses;
         double temp_hit_rate, temp_miss_rate;
@@ -491,7 +518,7 @@ VOID printFootprintInfo(){
         /*6*/ "store+code",
         /*7*/ "load+store+code",
     };
-    *out << "*****SESSION FOOTPRINT INFO*****" << endl;
+    *out << "*****FOOTPRINT INFO*****" << endl;
     for(int i=0; i<FOOTPRINT_CATEGORIES; i++) {
         *out << setfill(' ') << std::setw(30) << header[i] << "  "  << std::setw(20) << (footprint_totals[i]*ACCESS_SIZE) << " Bytes";
         *out << std::setw(20) << std::setprecision(4) << ((double)footprint_totals[i]*ACCESS_SIZE/KILO) << " KB" << endl;
@@ -524,14 +551,17 @@ VOID Fini(INT32 code, VOID *v)
     if(KnobMonitorFromStart){
         //need to take care of this if the cache was never finished
         writeOutMemLog();
+        *out << "Start GC Section Info: Type = " << "FULL" << endl;
         printCacheStats();
         printFootprintInfo();
+        *out << "End GC Section Info" << endl;
         accumulateCacheStats();
     }
 
     //printing out cache info (if cache used)
     if(KnobSimulateCache){
-        *out << "*****FINAL CACHE INFO*****" << endl;
+        *out << "Start Overall Info" << endl;
+        *out << "*****CACHE INFO*****" << endl;
         int i = 0;
         UINT64 temp_hits, temp_misses, temp_accesses;
         double temp_hit_rate, temp_miss_rate;
