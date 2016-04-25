@@ -228,8 +228,7 @@ CACHE_BASE::ACCESS_TYPE retrieve_ACCESS_TYPE(mem_operations mem_op){
         case INSTRUCTION_OP:
             return CACHE_BASE::ACCESS_TYPE_INST;
     }
-    somethingFailed = true;
-    failurePrintout("Not albe to discern the access type");
+    failurePrintout("Not able to discern the access type");
 }
 
 VOID writeOutMemLog(){
