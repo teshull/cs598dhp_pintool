@@ -229,6 +229,8 @@ CACHE_BASE::ACCESS_TYPE retrieve_ACCESS_TYPE(mem_operations mem_op){
             return CACHE_BASE::ACCESS_TYPE_INST;
     }
     failurePrintout("Not able to discern the access type");
+    //this can't be reached
+    return CACHE_BASE::ACCESS_TYPE_INST;
 }
 
 VOID writeOutMemLog(){
@@ -500,7 +502,7 @@ VOID recordInFootprint(ADDRINT addr, mem_operations mem_type){
 VOID printFootprintInfo(){
     //determining the footprint results
     UINT64 footprint_totals[FOOTPRINT_CATEGORIES];
-    for(int i = 0; i < FOOTPRINT_CATEGORIES; i++){
+    for(UINT64 i = 0; i < FOOTPRINT_CATEGORIES; i++){
         footprint_totals[i] = 0;
     }
     map<ADDRINT,UINT8>::iterator it =  gcFootprint.begin();
@@ -518,7 +520,7 @@ VOID printFootprintInfo(){
         /*7*/ "load+store+code",
     };
     *out << "*****FOOTPRINT INFO*****" << endl;
-    for(int i=0; i<FOOTPRINT_CATEGORIES; i++) {
+    for(UINT64 i=0; i<FOOTPRINT_CATEGORIES; i++) {
         *out << setfill(' ') << std::setw(30) << header[i] << "  "  << std::setw(20) << (footprint_totals[i]*ACCESS_SIZE) << " Bytes";
         *out << std::setw(20) << std::setprecision(4) << ((double)footprint_totals[i]*ACCESS_SIZE/KILO) << " KB" << endl;
     }
