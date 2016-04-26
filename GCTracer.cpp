@@ -241,10 +241,19 @@ VOID writeOutMemLog(){
         //splitting it up into as many addresses as necessary
         ADDRINT start = mask(data.address, ACCESS_SIZE);
         ADDRINT end   = mask(data.address + data.access_size - 1, ACCESS_SIZE);
+        ADDRINT lastLine = 0;
         const char * access_type_name = memOpToString(data.mem_op_type);
         for(ADDRINT addr = start ; addr <= end ; addr += ACCESS_SIZE) {
             //printing here
             ADDRINT real_addr = addr;
+            //checking to see if this is a new cache line
+            ADDRINT currLine = mask(real_addr, KnobLineSize.Value());
+            if(currLine == lastLine){
+                //not a new line - this isn't really another acces
+                continue;
+            }
+            lastLine = currLine;
+            //converting to physical address if necessary
             //converting to physical address if necessary
             if(KnobVirtualAddressTranslation){
                 real_addr = convertVirtualToPhysical(addr);
