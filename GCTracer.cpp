@@ -330,7 +330,7 @@ VOID CallSimulationEnd(THREADID threadid, ADDRINT regval = 0){
     //need to print out results right here
     writeOutMemLog();
     const char *gcType = regval == 0? "YOUNG" : "FULL";
-    *out << "Start GC Section Info: Type = " << *gcType << endl;
+    *out << "Start GC Section Info: Type = " << gcType << endl;
     printCacheStats();
     printFootprintInfo();
     *out << "End GC Section Info" << endl;
@@ -560,7 +560,8 @@ VOID Fini(INT32 code, VOID *v)
     if(KnobMonitorFromStart){
         //need to take care of this if the cache was never finished
         writeOutMemLog();
-        *out << "Start GC Section Info: Type = " << "FULL" << endl;
+        const char *gcType = "FULL";
+        *out << "Start GC Section Info: Type = " << gcType << endl;
         printCacheStats();
         printFootprintInfo();
         *out << "End GC Section Info" << endl;
