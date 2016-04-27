@@ -248,19 +248,18 @@ VOID writeOutMemLog(){
         for(ADDRINT addr = start ; addr <= end ; addr += ACCESS_SIZE) {
             //printing here
             ADDRINT real_addr = addr;
-            //checking to see if this is a new cache line
-            ADDRINT currLine = mask(real_addr, KnobLineSize.Value());
-            if(currLine == lastLine){
-                //not a new line - this isn't really another acces
-                continue;
-            }
-            lastLine = currLine;
-            //converting to physical address if necessary
             //converting to physical address if necessary
             if(KnobVirtualAddressTranslation){
                 real_addr = convertVirtualToPhysical(addr);
             }
             recordInFootprint(real_addr, data.mem_op_type);
+            //checking to see if this is a new cache line
+            ADDRINT currLine = mask(addr, KnobLineSize.Value());
+            if(currLine == lastLine){
+                //not a new line - this isn't really another acces
+                continue;
+            }
+            lastLine = currLine;
             //logging both the cache hits and misses
             CACHE_BASE::ACCESS_TYPE access_type = retrieve_ACCESS_TYPE(data.mem_op_type);
             if(KnobSimulateCache && accessCache(real_addr, access_type)){
