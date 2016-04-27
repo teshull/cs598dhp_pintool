@@ -361,7 +361,7 @@ VOID CallSimulationEnd(THREADID threadid, ADDRINT regval = 0){
     ATOMIC::OPS::Store<BOOL>(&withinGC, false);
     //FIXME need to print out the proper GC type here (full or local)
     const char *gcType = regval == 0? "YOUNG" : "FULL";
-    *out << "Start GC Section Info: Type = " << *gcType << endl;
+    *out << "Start GC Section Info: Type = " << gcType << endl;
     writeOutMemLog();
     printCacheStats();
     printFootprintInfo();
