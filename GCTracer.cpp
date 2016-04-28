@@ -329,6 +329,7 @@ VOID CallSimulationBegin(THREADID threadid){
 VOID CallSimulationEnd(THREADID threadid, ADDRINT regval = 0){
     //need to print out results right here
     writeOutMemLog();
+    arrayOffset = 0;
     const char *gcType = regval == 0? "YOUNG" : "FULL";
     *out << "Start GC Section Info: Type = " << gcType << endl;
     printCacheStats();
